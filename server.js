@@ -258,6 +258,77 @@ async function runReadinessWatchdog() {
   }
 }
 
+const SYNC_READY_MAX_WAIT_MS = 150000;
+const SEND_TIMEOUT_MS = 30000;
+const SEND_RETRY_DELAY_MS = 8000;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function pageSyncProbe() {
+  const page = client.pupPage;
+  if (!page) return null;
+  try {
+    return await page.evaluate(() => {
+      const socket = window.require?.("WAWebSocketModel")?.Socket;
+      const body = (document.body?.innerText || "").replace(/\s+/g, " ").toLowerCase();
+      return {
+        downloading: body.includes("messages are downloading") || body.includes("your messages are downloading") || body.includes("don't close this window"),
+        wwebjs: typeof window.WWebJS,
+        socketState: socket ? String(socket.state || "") : null,
+        hasSynced: socket ? !!socket.hasSynced : null,
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function waitForSendReady() {
+  const deadline = Date.now() + SYNC_READY_MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    const p = await pageSyncProbe();
+    if (p && p.wwebjs === "object" && p.socketState === "CONNECTED" && p.hasSynced === true && !p.downloading) {
+      return true;
+    }
+    console.log(`Waiting for WhatsApp message sync before replying... (${p ? `${p.socketState}, downloading=${p.downloading}` : "page unavailable"})`);
+    await sleep(5000);
+  }
+  return false;
+}
+
+async function timed(promise, ms, tag) {
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${tag} timed out after ${ms}ms`)), ms); });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sendReplyWithRetry(msg, replyText) {
+  const chatId = msg.from;
+  const attempts = [
+    { name: "msg.reply", fn: () => msg.reply(replyText) },
+    { name: "sendMessage(sendSeen:false)", fn: () => client.sendMessage(chatId, replyText, { sendSeen: false }) },
+    { name: "sendMessage(quoted)", fn: () => client.sendMessage(chatId, replyText, { sendSeen: false, quotedMessageId: msg.id?._serialized }) },
+  ];
+
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i];
+    try {
+      const sent = await timed(attempt.fn(), SEND_TIMEOUT_MS, attempt.name);
+      if (sent && sent.id) return { ok: true, method: attempt.name };
+      console.warn(`${attempt.name} resolved without a message object (may still be delivered).`);
+      return { ok: true, method: `${attempt.name}:no-object` };
+    } catch (e) {
+      lastError = `Reply send attempt ${i + 1} (${attempt.name}) failed: ${e.message}`;
+      console.error(lastError);
+      if (i < attempts.length - 1) await sleep(SEND_RETRY_DELAY_MS);
+    }
+  }
+  return { ok: false };
+}
+
 client.on("loading_screen", (percent, message) => {
   clientState = `loading:${percent}`;
   console.log(`WhatsApp loading: ${percent}% - ${message}`);
@@ -378,7 +449,18 @@ client.on("message", async (msg) => {
     const latestSettings = settings();
     if (!latestSettings.enabled || quotaRemaining(latestSettings) <= 0) return;
     if (reply) {
-      await msg.reply(reply);
+      const syncReady = await waitForSendReady();
+      if (!syncReady) {
+        lastError = "Timed out waiting for WhatsApp message sync; reply skipped.";
+        console.error(lastError);
+        return;
+      }
+      const sendResult = await sendReplyWithRetry(msg, reply);
+      if (!sendResult.ok) {
+        lastError = "Reply send failed after retries; reply was not delivered.";
+        console.error(lastError);
+        return;
+      }
       recordReply();
       const latest = chats();
       latest[chatId] = latest[chatId] || { enabled: true, messages: [] };
@@ -386,7 +468,7 @@ client.on("message", async (msg) => {
       latest[chatId].messages.push({ role: "assistant", content: reply, timestamp: Date.now() });
       latest[chatId].lastReplyAt = Date.now();
       writeJson(CHATS, latest);
-      console.log("Reply sent successfully.");
+      console.log(`Reply sent successfully. (${sendResult.method})`);
     }
   } catch (e) {
     lastError = e.message || String(e);
