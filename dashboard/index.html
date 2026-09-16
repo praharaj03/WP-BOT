@@ -3,68 +3,86 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>WhatsApp AI Control</title>
+  <title>WhatsApp AI — Control Center</title>
   <style>
-    *{box-sizing:border-box}body{margin:0;background:#09090b;color:#f4f4f5;font:14px Inter,system-ui,sans-serif}main{max-width:1000px;margin:40px auto;padding:0 20px}.top{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{margin:0;font-size:26px}.muted{color:#a1a1aa}.card{background:#141416;border:1px solid #27272a;border-radius:16px;padding:20px;margin-bottom:16px}.row{display:flex;justify-content:space-between;align-items:center;gap:16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.status{display:flex;align-items:center;gap:8px;color:#a1a1aa}.dot{width:9px;height:9px;border-radius:50%;background:#71717a}.dot.on{background:#4ade80}input,select,textarea{width:100%;margin-top:8px;background:#0d0d0f;border:1px solid #303035;color:#fff;border-radius:10px;padding:11px}textarea{min-height:130px;resize:vertical}button{background:#fff;color:#111;border:0;border-radius:9px;padding:10px 15px;font-weight:600;cursor:pointer}.switch{position:relative;width:52px;height:30px;flex:none}.switch input{display:none}.slider{position:absolute;inset:0;background:#3f3f46;border-radius:20px;cursor:pointer}.slider:before{content:'';position:absolute;width:22px;height:22px;left:4px;top:4px;background:white;border-radius:50%;transition:.2s}.switch input:checked+.slider{background:#22c55e}.switch input:checked+.slider:before{transform:translateX(22px)}.chat{display:flex;justify-content:space-between;align-items:center;border-top:1px solid #27272a;padding:12px 0}.chat:first-child{border-top:0}.danger{color:#fca5a5}.hidden{display:none}@media(max-width:700px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
+    :root{--bg:#050505;--panel:#0b0b0d;--panel2:#101012;--line:#1d1d21;--text:#f5f5f5;--muted:#8e8e96;--soft:#c7c7cc;--accent:#fff;--good:#62d995;--warn:#f0c36a;--bad:#ff6b6b}
+    *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;background:radial-gradient(circle at 80% -10%,#17171b 0,transparent 35%),var(--bg);color:var(--text);font:14px Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}button,input,select,textarea{font:inherit}button{cursor:pointer}.shell{max-width:1180px;margin:0 auto;padding:30px 22px 60px}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:24px}.brand{display:flex;gap:13px;align-items:center}.logo{width:42px;height:42px;border:1px solid #303035;border-radius:13px;display:grid;place-items:center;background:#111;font-weight:800}.eyebrow{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:#73737b}.title{font-size:28px;font-weight:750;letter-spacing:-.04em;margin:2px 0}.sub{color:var(--muted);margin:0}.connection{display:flex;align-items:center;gap:9px;border:1px solid var(--line);background:#0a0a0b;padding:9px 13px;border-radius:999px;color:var(--soft)}.dot{width:8px;height:8px;border-radius:50%;background:#666}.dot.on{background:var(--good);box-shadow:0 0 12px #62d99555}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{background:linear-gradient(180deg,#0d0d0f,#09090a);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 12px 40px #0008}.span-8{grid-column:span 8}.span-4{grid-column:span 4}.span-12{grid-column:span 12}.cardhead{display:flex;justify-content:space-between;gap:15px;align-items:flex-start;margin-bottom:18px}.label{font-weight:700;font-size:15px}.muted{color:var(--muted);font-size:12px;line-height:1.5}.statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat{background:#0a0a0b;border:1px solid var(--line);border-radius:14px;padding:15px}.stat .num{font-size:25px;font-weight:750;letter-spacing:-.04em;margin-top:4px}.stat .name{color:var(--muted);font-size:11px}.progress{height:7px;background:#1a1a1d;border-radius:20px;overflow:hidden;margin-top:12px}.progress i{display:block;height:100%;background:#eee;border-radius:20px;width:0;transition:.3s}.quotaRow{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:var(--soft);font-size:12px}input,select,textarea{width:100%;background:#080809;color:#f5f5f5;border:1px solid #27272c;border-radius:11px;padding:11px 12px;outline:none}input:focus,select:focus,textarea:focus{border-color:#555}textarea{min-height:115px;resize:vertical}.field{margin-top:13px}.field:first-child{margin-top:0}.field label{display:block;font-size:11px;color:#a2a2aa;margin-bottom:7px}.btn{background:#f5f5f5;color:#090909;border:0;border-radius:10px;padding:10px 14px;font-weight:700}.btn.secondary{background:#17171a;color:#fff;border:1px solid #29292e}.btn:active{transform:translateY(1px)}.switch{position:relative;width:48px;height:27px;flex:none}.switch input{display:none}.slider{position:absolute;inset:0;background:#34343a;border-radius:20px}.slider:before{content:'';position:absolute;width:19px;height:19px;left:4px;top:4px;background:#fff;border-radius:50%;transition:.2s}.switch input:checked+.slider{background:#e8e8e8}.switch input:checked+.slider:before{transform:translateX(21px);background:#111}.moods{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.mood{border:1px solid #252529;background:#0a0a0c;color:#c9c9ce;border-radius:12px;padding:12px;text-align:left;transition:.15s}.mood:hover{border-color:#4a4a50}.mood.active{border-color:#eee;background:#f2f2f2;color:#080808}.mood strong{display:block;font-size:13px}.mood span{font-size:11px;opacity:.7}.chat{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding:12px 0}.chat:first-child{border-top:0}.chatname{max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.danger{color:#ff9292;font-size:12px;min-height:18px}.hidden{display:none}.actions{display:flex;gap:9px;justify-content:flex-end;margin-top:15px}.connectionForm{display:grid;grid-template-columns:1fr 1fr auto;gap:9px}.footer{color:#555;font-size:11px;text-align:center;margin-top:18px}
+    @media(max-width:850px){.span-8,.span-4{grid-column:span 12}.connectionForm{grid-template-columns:1fr}.statgrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:520px){.shell{padding:20px 13px}.top{flex-direction:column}.moods{grid-template-columns:repeat(2,1fr)}.statgrid{grid-template-columns:1fr 1fr}}
   </style>
 </head>
 <body>
-<main>
-  <div class="top">
-    <div><h1>Personal WhatsApp AI</h1><p class="muted">Remote control for your Windows WhatsApp agent</p></div>
-    <div class="status"><span id="dot" class="dot"></span><span id="state">Not connected</span></div>
-  </div>
+<main class="shell">
+  <header class="top">
+    <div class="brand"><div class="logo">WA</div><div><div class="eyebrow">Control Center</div><div class="title">Personal WhatsApp AI</div><p class="sub">Your replies, your mood, your rules.</p></div></div>
+    <div class="connection"><span id="dot" class="dot"></span><span id="state">Not connected</span></div>
+  </header>
 
-  <div class="card" id="connectCard">
-    <b>Backend connection</b>
-    <p class="muted">Enter the public URL of your Windows backend and the CONTROL_TOKEN configured there.</p>
-    <input id="backend" placeholder="https://your-backend.example.com">
-    <input id="token" type="password" placeholder="CONTROL_TOKEN">
-    <button onclick="connect()" style="margin-top:10px">Connect</button>
+  <section class="card" id="connectCard">
+    <div class="cardhead"><div><div class="label">Backend connection</div><div class="muted">Connect this dashboard to your Windows agent.</div></div></div>
+    <div class="connectionForm"><input id="backend" placeholder="https://your-backend.example.com"><input id="token" type="password" placeholder="CONTROL_TOKEN"><button class="btn" onclick="connect()">Connect</button></div>
     <p id="error" class="danger"></p>
-  </div>
+  </section>
 
-  <div id="app" class="hidden">
-    <div class="card"><div class="row"><div><b>AI Auto Reply</b><div class="muted">Replies to incoming private WhatsApp messages.</div></div><label class="switch"><input id="enabled" type="checkbox"><span class="slider"></span></label></div></div>
+  <section id="app" class="hidden">
     <div class="grid">
-      <div class="card"><b>Reply scope</b><select id="mode"><option value="everyone">Everyone (private chats)</option><option value="selected">Selected chats only</option></select><p class="muted">Groups and status messages remain ignored.</p></div>
-      <div class="card"><b>AI personality</b><textarea id="prompt"></textarea><button onclick="save()">Save settings</button></div>
+      <div class="card span-12">
+        <div class="cardhead"><div><div class="label">Live stats</div><div class="muted">Today’s activity and current agent state.</div></div><span class="muted" id="uptime">Uptime —</span></div>
+        <div class="statgrid">
+          <div class="stat"><div class="name">AI replies today</div><div class="num" id="replies">0</div></div>
+          <div class="stat"><div class="name">Incoming today</div><div class="num" id="incoming">0</div></div>
+          <div class="stat"><div class="name">Quota remaining</div><div class="num" id="remaining">0</div></div>
+          <div class="stat"><div class="name">Chats tracked</div><div class="num" id="chatCount">0</div></div>
+        </div>
+        <div class="quotaRow"><span id="quotaText">0 / 100 replies used today</span><span id="quotaPercent">0%</span></div>
+        <div class="progress"><i id="quotaBar"></i></div>
+      </div>
+
+      <div class="card span-8">
+        <div class="cardhead"><div><div class="label">AI Auto Reply</div><div class="muted">Automatically reply to incoming private messages.</div></div><label class="switch"><input id="enabled" type="checkbox"><span class="slider"></span></label></div>
+        <div class="field"><label>Reply scope</label><select id="mode"><option value="everyone">Everyone — private chats</option><option value="selected">Selected chats only</option></select></div>
+        <div class="field"><label>Daily reply quota</label><input id="dailyQuota" type="number" min="1" max="10000" step="1" placeholder="100"><div class="muted" style="margin-top:6px">Maximum AI replies per day. Set a lower number to control Gemini usage.</div></div>
+        <div class="actions"><button class="btn secondary" onclick="save()">Save settings</button></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="cardhead"><div><div class="label">Current mood</div><div class="muted">Choose how the agent should sound.</div></div></div>
+        <div class="moods" id="moods">
+          <button class="mood" data-mood="casual"><strong>Casual</strong><span>Relaxed & friendly</span></button>
+          <button class="mood" data-mood="formal"><strong>Formal</strong><span>Polite & professional</span></button>
+          <button class="mood" data-mood="sad"><strong>Sad</strong><span>Quiet & melancholic</span></button>
+          <button class="mood" data-mood="romantic"><strong>Romantic</strong><span>Warm & affectionate</span></button>
+          <button class="mood" data-mood="vulgar"><strong>Vulgar</strong><span>Strong slang</span></button>
+          <button class="mood" data-mood="angry"><strong>Angry</strong><span>Blunt & frustrated</span></button>
+        </div>
+      </div>
+
+      <div class="card span-12">
+        <div class="cardhead"><div><div class="label">Reply personality</div><div class="muted">Optional extra instruction. The selected mood is applied automatically.</div></div></div>
+        <textarea id="prompt" placeholder="Example: Keep replies short and use emojis occasionally."></textarea>
+        <div class="actions"><button class="btn" onclick="save()">Save personality</button></div>
+      </div>
+
+      <div class="card span-12">
+        <div class="cardhead"><div><div class="label">Known chats</div><div class="muted">Used when “Selected chats only” is enabled.</div></div></div>
+        <div id="chats"></div>
+      </div>
     </div>
-    <div class="card"><div class="row"><b>Known chats</b><span class="muted">Used when Selected chats is enabled</span></div><div id="chats" style="margin-top:10px"></div></div>
-  </div>
+  </section>
+  <div class="footer">Windows backend • Gemini • WhatsApp Web</div>
 </main>
 <script>
-const backendKey='wpbot_backend', tokenKey='wpbot_token';
-let base='', token='';
+const backendKey='wpbot_backend',tokenKey='wpbot_token';let base='',token='',selectedMood='casual';
 function $(id){return document.getElementById(id)}
-async function api(path, options={}){
-  const r=await fetch(base+path,{...options,headers:{'Content-Type':'application/json','x-control-token':token,...(options.headers||{})}});
-  const data=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(data.error||`HTTP ${r.status}`);
-  return data;
-}
-async function load(){
-  try{
-    const s=await api('/api/status');
-    $('app').classList.remove('hidden'); $('error').textContent='';
-    $('state').textContent=s.clientState+(s.geminiConfigured?'':' • Gemini key missing');
-    $('dot').className='dot '+(s.clientReady?'on':'');
-    $('enabled').checked=s.settings.enabled; $('mode').value=s.settings.mode; $('prompt').value=s.settings.systemPrompt;
-    const c=await api('/api/chats');
-    $('chats').innerHTML=c.length?c.map(x=>`<div class="chat"><div><b>${escapeHtml(x.id.replace('@c.us',''))}</b><div class="muted">${x.messageCount} stored messages</div></div><button onclick="toggleChat('${encodeURIComponent(x.id)}',${!x.enabled})">${x.enabled?'Enabled':'Disabled'}</button></div>`).join(''):'<p class="muted">No chats recorded yet.</p>';
-  }catch(e){$('error').textContent=e.message;$('app').classList.add('hidden')}
-}
-function escapeHtml(v){return v.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
-async function connect(){
-  base=$('backend').value.trim().replace(/\/$/,''); token=$('token').value;
-  if(!base||!token){$('error').textContent='Backend URL and token are required.';return}
-  localStorage.setItem(backendKey,base);localStorage.setItem(tokenKey,token);await load();
-}
-async function save(){await api('/api/settings',{method:'POST',body:JSON.stringify({enabled:$('enabled').checked,mode:$('mode').value,systemPrompt:$('prompt').value})});await load()}
-async function toggleChat(id,v){await api('/api/chats/'+id+'/toggle',{method:'POST',body:JSON.stringify({enabled:v})});await load()}
-$('enabled').onchange=save;$('mode').onchange=save;
-$('backend').value=localStorage.getItem(backendKey)||'';$('token').value=localStorage.getItem(tokenKey)||'';
-if($('backend').value&&$('token').value){base=$('backend').value;token=$('token').value;load()}
+async function api(path,options={}){const r=await fetch(base+path,{...options,headers:{'Content-Type':'application/json','x-control-token':token,...(options.headers||{})}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`HTTP ${r.status}`);return data}
+function formatUptime(sec){sec=Number(sec||0);const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60);return h?`${h}h ${m}m`:m?`${m}m`:`${sec}s`}
+function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+function renderStats(s,stats){const t=stats.today||{};const used=Number(t.replies||0),quota=Number(t.quota||0),pct=quota?Math.min(100,Math.round(used/quota*100)):0;$('replies').textContent=used;$('incoming').textContent=t.incoming||0;$('remaining').textContent=t.remaining??0;$('chatCount').textContent=stats.allTime?.chats||0;$('quotaText').textContent=`${used} / ${quota} replies used today`;$('quotaPercent').textContent=`${pct}%`;$('quotaBar').style.width=pct+'%';$('uptime').textContent='Uptime '+formatUptime(stats.uptimeSeconds)}
+async function load(){try{const s=await api('/api/status');const stats=await api('/api/stats');$('app').classList.remove('hidden');$('error').textContent='';$('state').textContent=s.clientState+(s.geminiConfigured?'':' • Gemini key missing');$('dot').className='dot '+(s.clientReady?'on':'');$('enabled').checked=s.settings.enabled;$('mode').value=s.settings.mode;$('dailyQuota').value=s.settings.dailyQuota||100;$('prompt').value=s.settings.systemPrompt||'';selectedMood=s.settings.mood||'casual';document.querySelectorAll('.mood').forEach(x=>x.classList.toggle('active',x.dataset.mood===selectedMood));renderStats(s,stats);const c=await api('/api/chats');$('chatCount').textContent=c.length;$('chats').innerHTML=c.length?c.map(x=>`<div class="chat"><div class="chatname"><b>${escapeHtml(x.id.replace('@c.us',''))}</b><div class="muted">${x.messageCount} stored messages</div></div><button class="btn ${x.enabled?'':'secondary'}" onclick="toggleChat('${encodeURIComponent(x.id)}',${!x.enabled})">${x.enabled?'Enabled':'Disabled'}</button></div>`).join(''):'<p class="muted">No chats recorded yet.</p>'}catch(e){$('error').textContent=e.message;$('app').classList.add('hidden');$('dot').className='dot';$('state').textContent='Not connected'}}
+async function connect(){base=$('backend').value.trim().replace(/\/$/,'');token=$('token').value;if(!base||!token){$('error').textContent='Backend URL and token are required.';return}localStorage.setItem(backendKey,base);localStorage.setItem(tokenKey,token);await load()}
+async function save(){try{await api('/api/settings',{method:'POST',body:JSON.stringify({enabled:$('enabled').checked,mode:$('mode').value,mood:selectedMood,dailyQuota:Number($('dailyQuota').value),systemPrompt:$('prompt').value})});await load()}catch(e){$('error').textContent=e.message)}}
+async function toggleChat(id,v){try{await api('/api/chats/'+id+'/toggle',{method:'POST',body:JSON.stringify({enabled:v})});await load()}catch(e){$('error').textContent=e.message)}}
+document.querySelectorAll('.mood').forEach(btn=>btn.onclick=()=>{selectedMood=btn.dataset.mood;document.querySelectorAll('.mood').forEach(x=>x.classList.toggle('active',x===btn));save()});$('enabled').onchange=save;$('mode').onchange=save;$('dailyQuota').onchange=save;$('backend').value=localStorage.getItem(backendKey)||'';$('token').value=localStorage.getItem(tokenKey)||'';if($('backend').value&&$('token').value){base=$('backend').value;token=$('token').value;load()}
+setInterval(()=>{if(base&&token&&!$('app').classList.contains('hidden'))load()},10000);
 </script>
 </body>
 </html>
