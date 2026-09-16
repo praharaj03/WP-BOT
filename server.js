@@ -85,7 +85,16 @@ function quotaRemaining(s = settings()) {
 const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
+const READY_GRACE_MS = 60000;
+const READY_RECOVERY_MS = 120000;
+const READY_MAX_WAIT_MS = 240000;
+const READY_WATCH_INTERVAL_MS = 15000;
+
 let clientReady = false;
+let readyViaWatchdog = false;
+let recoveryAttempts = 0;
+let readyDeadline = 0;
+let readinessWatchdogTimer = null;
 let qrVisible = false;
 let clientState = "starting";
 let lastError = "";
@@ -120,6 +129,10 @@ const client = new Client({
     ...(executablePath ? { executablePath } : {}),
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   },
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection (likely whatsapp-web.js internal):", reason?.stack || reason?.message || reason);
 });
 
 async function runWhatsAppDiagnostic(label = "probe") {
@@ -176,6 +189,75 @@ function startWhatsAppDiagnostics() {
   }, 10000);
 }
 
+async function probeReadiness() {
+  const page = client.pupPage;
+  if (!page) return null;
+  try {
+    return await page.evaluate(() => {
+      const socket = window.require?.("WAWebSocketModel")?.Socket;
+      return {
+        url: window.location.href,
+        wwebjs: typeof window.WWebJS,
+        hasSynced: socket ? !!socket.hasSynced : null,
+        socketState: socket ? String(socket.state || "") : null,
+        onAddMessageEvent: typeof window.onAddMessageEvent,
+        onMessageAckEvent: typeof window.onMessageAckEvent,
+        onAppStateHasSyncedEvent: typeof window.onAppStateHasSyncedEvent,
+        inputVisible: !!document.querySelector('div[contenteditable="true"], textarea, input[type="text"]'),
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
+function markReady(source) {
+  if (clientReady) return;
+  clientReady = true;
+  readyViaWatchdog = source === "watchdog";
+  qrVisible = false;
+  clientState = "ready";
+  if (diagnosticTimer) { clearInterval(diagnosticTimer); diagnosticTimer = null; }
+  if (readinessWatchdogTimer) { clearInterval(readinessWatchdogTimer); readinessWatchdogTimer = null; }
+  console.log(`WhatsApp AI Agent ready. (${source})`);
+}
+
+async function runReadinessWatchdog() {
+  if (!client.pupPage || clientReady) return;
+  const elapsed = Date.now() - startedAt;
+  const p = await probeReadiness();
+  if (!p) return;
+
+  const pipelineWired = 
+    p.wwebjs === "object" &&
+    p.onAddMessageEvent === "function" &&
+    p.socketState === "CONNECTED" &&
+    p.hasSynced === true;
+
+  if (pipelineWired) {
+    if (Date.now() >= readyDeadline) {
+      runWhatsAppDiagnostic("watchdog_ready");
+      markReady("watchdog");
+    }
+    return;
+  }
+
+  if (elapsed >= READY_MAX_WAIT_MS) {
+    lastError = `WhatsApp client did not reach a verified ready state in ${Math.floor(elapsed / 1000)}s (WWebJS=${p.wwebjs}, socket=${p.socketState}, hasSynced=${p.hasSynced}). WhatsApp Web may have shipped an incompatible update.`;
+    if (diagnosticTimer) { clearInterval(diagnosticTimer); diagnosticTimer = null; }
+    if (readinessWatchdogTimer) { clearInterval(readinessWatchdogTimer); readinessWatchdogTimer = null; }
+    console.error(lastError);
+    return;
+  }
+
+  if (recoveryAttempts === 0 && elapsed >= READY_RECOVERY_MS) {
+    recoveryAttempts++;
+    console.log("Ready watchdog: message pipeline is not fully wired yet. Reloading WhatsApp Web once so the client re-injects cleanly...");
+    await client.pupPage.reload({ waitUntil: "load", timeout: 30000 }).catch(() => {});
+    readyDeadline = Date.now() + READY_GRACE_MS;
+  }
+}
+
 client.on("loading_screen", (percent, message) => {
   clientState = `loading:${percent}`;
   console.log(`WhatsApp loading: ${percent}% - ${message}`);
@@ -197,16 +279,18 @@ client.on("authenticated", () => {
   clientState = "authenticated";
   console.log("WhatsApp authenticated. Waiting for WhatsApp Web to finish loading...");
   startWhatsAppDiagnostics();
+  readyDeadline = Date.now() + READY_GRACE_MS;
+  if (readinessWatchdogTimer) clearInterval(readinessWatchdogTimer);
+  readinessWatchdogTimer = setInterval(() => { runReadinessWatchdog(); }, READY_WATCH_INTERVAL_MS);
 });
 
 client.on("ready", async () => {
-  clientReady = true;
-  qrVisible = false;
-  clientState = "ready";
   if (diagnosticTimer) clearInterval(diagnosticTimer);
   diagnosticTimer = null;
+  if (readinessWatchdogTimer) clearInterval(readinessWatchdogTimer);
+  readinessWatchdogTimer = null;
   await runWhatsAppDiagnostic("ready");
-  console.log("WhatsApp AI Agent ready.");
+  markReady("library");
 });
 
 client.on("auth_failure", (msg) => {
@@ -218,10 +302,14 @@ client.on("auth_failure", (msg) => {
 
 client.on("disconnected", (reason) => {
   clientReady = false;
+  readyViaWatchdog = false;
   clientState = "disconnected";
+  recoveryAttempts = 0;
   lastError = String(reason);
   if (diagnosticTimer) clearInterval(diagnosticTimer);
   diagnosticTimer = null;
+  if (readinessWatchdogTimer) clearInterval(readinessWatchdogTimer);
+  readinessWatchdogTimer = null;
   console.log("Disconnected:", reason);
 });
 
@@ -311,7 +399,7 @@ client.on("message", async (msg) => {
 app.get("/api/health", (req, res) => res.json({ ok: true, service: "whatsapp-ai-agent", localOnly: true }));
 app.get("/api/status", (req, res) => {
   const s = settings();
-  res.json({ clientReady, clientState, qrVisible, lastError, diagnostics: waDiagnostics, settings: s, groqConfigured: !!groq, geminiConfigured: !!gemini, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), quotaRemaining: quotaRemaining(s) });
+  res.json({ clientReady, clientState, readyViaWatchdog, recoveryAttempts, qrVisible, lastError, diagnostics: waDiagnostics, settings: s, groqConfigured: !!groq, geminiConfigured: !!gemini, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), quotaRemaining: quotaRemaining(s) });
 });
 app.get("/api/stats", (req, res) => {
   const s = settings(); const all = chats(); const list = Object.values(all);
