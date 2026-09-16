@@ -25,98 +25,122 @@ const client = new Client({
   },
 });
 
+function print(label, value) {
+  console.log(`\n--- ${label} ---`);
+  console.log(JSON.stringify(value, null, 2));
+}
+
 async function inspect(label) {
   try {
     const page = client.pupPage;
     if (!page) throw new Error("client.pupPage is unavailable");
 
-    const result = await page.evaluate(async () => {
-      const safeType = (value) => {
-        try { return typeof value; } catch { return "error"; }
+    const result = await page.evaluate(() => {
+      const safe = (fn) => {
+        try { return fn(); }
+        catch (error) { return { error: String(error?.stack || error?.message || error) }; }
       };
-      const safeString = (value) => {
-        try { return value == null ? null : String(value); } catch { return "error"; }
+      const type = (v) => {
+        try { return typeof v; } catch { return "error"; }
       };
-      const safeKeys = (value) => {
-        try { return value ? Object.keys(value).slice(0, 60) : []; } catch { return []; }
+      const keys = (v) => {
+        try { return v ? Object.keys(v).slice(0, 80) : []; } catch { return []; }
       };
-      const safeRequire = (name) => {
-        try {
-          const value = window.require(name);
-          return {
-            found: true,
-            type: safeType(value),
-            keys: safeKeys(value),
-            string: safeString(value).slice(0, 200),
-          };
-        } catch (error) {
-          return { found: false, error: String(error?.message || error) };
+
+      const out = {
+        page: safe(() => ({
+          url: location.href,
+          title: document.title,
+          readyState: document.readyState,
+          body: (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 350),
+        })),
+        WWebJS: { type: type(window.WWebJS), keys: keys(window.WWebJS) },
+        Store: type(window.Store),
+        require: type(window.require),
+        checks: {},
+      };
+
+      // These are the exact operations used by whatsapp-web.js during ready().
+      out.checks.connModule = safe(() => {
+        const mod = window.require("WAWebConnModel");
+        return {
+          type: type(mod),
+          keys: keys(mod),
+          connType: type(mod?.Conn),
+          connKeys: keys(mod?.Conn),
+          serializeType: type(mod?.Conn?.serialize),
+        };
+      });
+
+      out.checks.connSerialize = safe(() => {
+        const mod = window.require("WAWebConnModel");
+        if (type(mod?.Conn?.serialize) !== "function") {
+          throw new Error("WAWebConnModel.Conn.serialize is not a function");
         }
-      };
+        const value = mod.Conn.serialize();
+        return {
+          type: type(value),
+          keys: keys(value),
+          value: value == null ? value : String(value).slice(0, 500),
+        };
+      });
 
-      const info = {
-        url: location.href,
-        title: document.title,
-        readyState: document.readyState,
-        body: (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 500),
-        WWebJS: safeType(window.WWebJS),
-        WWebJSKeys: safeKeys(window.WWebJS),
-        Store: safeType(window.Store),
-        webpackChunk: safeType(window.webpackChunkwhatsapp_web_client),
-        webpackChunkKeys: safeKeys(window.webpackChunkwhatsapp_web_client),
-        require: safeType(window.require),
-        requireKeys: safeKeys(window.require),
-        requireModuleCount: safeType(window.require?.m) === "object" ? Object.keys(window.require.m).length : null,
-        knownModules: {},
-      };
+      out.checks.meUserModule = safe(() => {
+        const mod = window.require("WAWebUserPrefsMeUser");
+        return {
+          type: type(mod),
+          keys: keys(mod),
+          pnGetter: type(mod?.getMaybeMePnUser),
+          lidGetter: type(mod?.getMaybeMeLidUser),
+        };
+      });
 
-      const knownNames = [
-        "WAWebConnModel",
-        "WAWebUserPrefsMeUser",
-        "WAWebSocketModel",
-        "WAWebCmd",
-        "WAWebUserPrefsMultiDevice",
-        "WAWebContactModel",
-        "WAWebChatModel",
-        "WAWebMsgModel",
-        "WAWebWidFactory",
-      ];
-      for (const name of knownNames) info.knownModules[name] = safeRequire(name);
+      out.checks.pnUser = safe(() => {
+        const mod = window.require("WAWebUserPrefsMeUser");
+        const value = mod.getMaybeMePnUser();
+        return {
+          type: type(value),
+          value: value == null ? null : String(value).slice(0, 300),
+          keys: keys(value),
+        };
+      });
 
-      const matches = [];
-      const modules = window.require?.m;
-      if (modules && typeof modules === "object") {
-        for (const id of Object.keys(modules)) {
-          let source = "";
-          try { source = String(modules[id]); } catch { continue; }
-          if (
-            source.includes("getMaybeMePnUser") ||
-            source.includes("getMaybeMeLidUser") ||
-            source.includes("Conn.serialize") ||
-            source.includes("WAWebConnModel")
-          ) {
-            matches.push({
-              id,
-              hasPnUser: source.includes("getMaybeMePnUser"),
-              hasLidUser: source.includes("getMaybeMeLidUser"),
-              hasConnSerialize: source.includes("Conn.serialize"),
-              hasConnModelName: source.includes("WAWebConnModel"),
-              source: source.slice(0, 500),
-            });
-            if (matches.length >= 20) break;
-          }
-        }
-      }
-      info.moduleSourceMatches = matches;
+      out.checks.lidUser = safe(() => {
+        const mod = window.require("WAWebUserPrefsMeUser");
+        const value = mod.getMaybeMeLidUser();
+        return {
+          type: type(value),
+          value: value == null ? null : String(value).slice(0, 300),
+          keys: keys(value),
+        };
+      });
 
-      return info;
+      out.checks.wwebjsVersion = safe(() => ({
+        type: type(window.WWebJS?.compareWwebVersions),
+        version: safe(() => window.WWebJS?.compareWwebVersions?.("2.3000.0", ">=")),
+      }));
+
+      return out;
     });
 
-    console.log(`\n--- ${label} ---`);
-    console.log(JSON.stringify(result, null, 2));
+    print(label, result);
   } catch (error) {
-    console.error(`\n--- ${label} ERROR ---`);
-    console.error(error.stack || error.message || error);
+    print(`${label} ERROR`, { error: error.stack || error.message || String(error) });
+  }
+}
+
+async function runClientStateCheck() {
+  const timeout = new Promise((resolve) =>
+    setTimeout(() => resolve({ timeout: true }), 5000)
+  );
+  try {
+    const result = await Promise.race([
+      client.getState().then((state) => ({ state })).catch((error) => ({ error: error.stack || error.message || String(error) })),
+      timeout,
+    ]);
+    print("client.getState()", result);
+  } catch (error) {
+    print("client.getState() ERROR", { error: error.stack || error.message || String(error) });
   }
 }
 
@@ -132,6 +156,7 @@ client.on("authenticated", async () => {
 client.on("ready", async () => {
   console.log("READY EVENT FIRED");
   await inspect("ready");
+  await runClientStateCheck();
   await client.destroy();
   process.exit(0);
 });
@@ -145,12 +170,16 @@ client.on("disconnected", (reason) => {
   console.error("DISCONNECTED:", reason);
 });
 
-setInterval(async () => {
+let pollCount = 0;
+const pollTimer = setInterval(async () => {
   if (!client.pupPage) return;
-  await inspect("poll");
+  pollCount++;
+  await inspect(`poll ${pollCount}`);
+  if (pollCount === 2) await runClientStateCheck();
 }, 10000);
 
 setTimeout(() => {
+  clearInterval(pollTimer);
   console.error("\nTIMEOUT: ready event did not fire within 120 seconds.");
   process.exit(2);
 }, 120000);
