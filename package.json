@@ -1,8 +1,8 @@
 {
   "name": "personal-whatsapp-ai-agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Private WhatsApp Web AI auto-reply agent for personal use",
+  "description": "Personal WhatsApp AI auto-reply agent with a Windows backend and remote dashboard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,7 +13,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
-    "openai": "^5.12.2",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.34.4"
   }
