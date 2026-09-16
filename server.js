@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config();\n\n// TERMINAL_MESSAGE_ONLY_PATCH\nconst ORIGINAL_CONSOLE_LOG = console.log.bind(console);\nconsole.log = () => {};\nconsole.warn = () => {};\nconsole.error = () => {};\n\nfunction getTerminalMessageId(msg) {\n  return msg?.id?._serialized || msg?.id?.$1 || msg?.id?.toString?.() || "unknown";\n}\n\nfunction terminalMessage(msg, replyText) {\n  ORIGINAL_CONSOLE_LOG(\n    `[MSG] ${getTerminalMessageId(msg)} | Message: ${msg?.body || ""} | Reply: ${replyText || ""}`\n  );\n}\n
 
 const express = require("express");
 const cors = require("cors");
@@ -317,7 +317,7 @@ async function sendReplyWithRetry(msg, replyText) {
     const attempt = attempts[i];
     try {
       const sent = await timed(attempt.fn(), SEND_TIMEOUT_MS, attempt.name);
-      if (sent && sent.id) return { ok: true, method: attempt.name };
+      if (sent && sent.id) { terminalMessage(msg, replyText); return { ok: true, method: attempt.name }; }
       console.warn(`${attempt.name} resolved without a message object (may still be delivered).`);
       return { ok: true, method: `${attempt.name}:no-object` };
     } catch (e) {
