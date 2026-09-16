@@ -5,13 +5,14 @@ const cors = require("cors");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
 const path = require("path");
-const crypto = require("crypto");
-
 const { GoogleGenAI } = require("@google/genai");
 const Groq = require("groq-sdk");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 
 const app = express();
+const PORT = Number(process.env.PORT || 3000);
+const HOST = "127.0.0.1";
+
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
@@ -36,7 +37,7 @@ const DEFAULT_SETTINGS = {
   enabled: false,
   mode: "everyone",
   provider: "groq",
-  groqModel: "openai/gpt-oss-20b",
+  groqModel: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
   geminiModel: process.env.GEMINI_MODEL || "gemini-3.6-flash",
   maxTokens: 180,
   mood: "casual",
@@ -68,25 +69,17 @@ function settings() {
 }
 
 function chats() { return readJson(CHATS, {}); }
-
-function recordIncoming() {
-  const s = settings(); s.usage.incoming += 1; writeJson(SETTINGS, s);
-}
-
-function recordUsage(usage) {
+function recordIncoming() { const s = settings(); s.usage.incoming += 1; writeJson(SETTINGS, s); }
+function recordReply() { const s = settings(); s.usage.replies += 1; writeJson(SETTINGS, s); }
+function recordUsage(u) {
   const s = settings();
-  s.usage.inputTokens += Number(usage.inputTokens || 0);
-  s.usage.outputTokens += Number(usage.outputTokens || 0);
-  s.usage.totalTokens += Number(usage.totalTokens || 0);
+  s.usage.inputTokens += Number(u.inputTokens || 0);
+  s.usage.outputTokens += Number(u.outputTokens || 0);
+  s.usage.totalTokens += Number(u.totalTokens || 0);
   writeJson(SETTINGS, s);
 }
-
-function recordReply() { const s = settings(); s.usage.replies += 1; writeJson(SETTINGS, s); }
-
 function quotaRemaining(s = settings()) {
-  const quota = Number(s.dailyQuota);
-  if (quota <= 0) return 0;
-  return Math.max(0, quota - Number(s.usage.replies || 0));
+  return Math.max(0, Number(s.dailyQuota || 0) - Number(s.usage.replies || 0));
 }
 
 const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
@@ -98,24 +91,6 @@ let clientState = "starting";
 let lastError = "";
 const startedAt = Date.now();
 const pending = new Set();
-
-const CONTROL_TOKEN = (process.env.CONTROL_TOKEN || "").trim();
-
-function authorized(req, res, next) {
-  if (!CONTROL_TOKEN) {
-    return res.status(503).json({ error: "CONTROL_TOKEN is not configured on the Windows backend." });
-  }
-
-  const supplied = String(req.get("x-control-token") || "").trim();
-  const expected = Buffer.from(CONTROL_TOKEN, "utf8");
-  const actual = Buffer.from(supplied, "utf8");
-
-  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
-    return res.status(401).json({ error: "Invalid CONTROL_TOKEN. Check the token in your Windows .env and dashboard." });
-  }
-
-  next();
-}
 
 const chromeCandidates = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -144,8 +119,7 @@ client.on("disconnected", (reason) => { clientReady = false; clientState = "disc
 
 function shouldReply(msg, s) {
   if (!s.enabled || !msg.body?.trim() || msg.fromMe || msg.from.endsWith("@g.us") || msg.isStatus) return false;
-  if (s.mode === "selected") return !!chats()[msg.from]?.enabled;
-  return true;
+  return s.mode === "selected" ? !!chats()[msg.from]?.enabled : true;
 }
 
 function buildConversation(history, incoming) {
@@ -156,14 +130,12 @@ function buildConversation(history, incoming) {
 
 function buildPrompt(s, conversation) {
   const moodInstruction = MOODS[s.mood] || MOODS.casual;
-  return `${s.systemPrompt}\n\nMood: ${s.mood}\nMood instructions: ${moodInstruction}\n\nImportant instructions:\n- You are replying to a WhatsApp conversation.\n- Sound natural and human.\n- Do not mention that you are an AI unless explicitly asked.\n- Do not use unnecessary formal language unless the selected mood is formal.\n- Keep replies reasonably short.\n- Understand the previous conversation before replying.\n- Do not repeat information unnecessarily.\n- Do not use markdown unless necessary.\n- Reply with ONLY the message that should be sent.\n\nConversation:\n${conversation}\n\nGenerate ONLY the reply.`;
+  return `${s.systemPrompt}\n\nMood: ${s.mood}\nMood instructions: ${moodInstruction}\n\nImportant instructions:\n- You are replying to a WhatsApp conversation.\n- Sound natural and human.\n- Do not mention that you are an AI unless explicitly asked.\n- Keep replies reasonably short.\n- Understand the previous conversation before replying.\n- Do not repeat information unnecessarily.\n- Do not use markdown unless necessary.\n- Reply with ONLY the message that should be sent.\n\nConversation:\n${conversation}\n\nGenerate ONLY the reply.`;
 }
 
 async function generateGroqReply(prompt, model, maxTokens) {
   if (!groq) throw new Error("GROQ_API_KEY is missing in .env");
-  const response = await groq.chat.completions.create({
-    model, messages: [{ role: "user", content: prompt }], max_completion_tokens: maxTokens, temperature: 0.7,
-  });
+  const response = await groq.chat.completions.create({ model, messages: [{ role: "user", content: prompt }], max_completion_tokens: maxTokens, temperature: 0.7 });
   const usage = response.usage || {};
   return { text: response.choices?.[0]?.message?.content?.trim() || "", usage: { inputTokens: usage.prompt_tokens || 0, outputTokens: usage.completion_tokens || 0, totalTokens: usage.total_tokens || 0 } };
 }
@@ -176,11 +148,11 @@ async function generateGeminiReply(prompt, model, maxTokens) {
 }
 
 async function generateReply(chatId, incoming) {
-  const history = chats()[chatId]?.messages || [];
   const s = settings();
+  const history = chats()[chatId]?.messages || [];
   const prompt = buildPrompt(s, buildConversation(history, incoming));
-  if (s.provider === "gemini") return generateGeminiReply(prompt, s.geminiModel || process.env.GEMINI_MODEL || "gemini-3.6-flash", Number(s.maxTokens) || 180);
-  return generateGroqReply(prompt, s.groqModel || "openai/gpt-oss-20b", Number(s.maxTokens) || 180);
+  if (s.provider === "gemini") return generateGeminiReply(prompt, s.geminiModel, Number(s.maxTokens) || 180);
+  return generateGroqReply(prompt, s.groqModel, Number(s.maxTokens) || 180);
 }
 
 client.on("message", async (msg) => {
@@ -189,16 +161,14 @@ client.on("message", async (msg) => {
     const currentSettings = settings();
     if (!shouldReply(msg, currentSettings)) return;
     recordIncoming();
-    if (pending.has(chatId)) { console.log(`Already processing ${chatId}`); return; }
+    if (pending.has(chatId)) return;
     if (quotaRemaining() <= 0) { console.log("Daily AI reply quota reached. Reply skipped."); return; }
     pending.add(chatId);
     console.log(`\nIncoming message from ${chatId}`);
     console.log(`Message: ${msg.body}`);
     const result = await generateReply(chatId, msg.body);
-    const reply = result.text;
     recordUsage(result.usage);
-    console.log(`${currentSettings.provider} reply: ${reply}`);
-    console.log(`Tokens: ${result.usage.totalTokens}`);
+    const reply = result.text;
     const all = chats();
     const chat = all[chatId] || { enabled: true, messages: [], lastMessageAt: null, lastReplyAt: null };
     chat.messages.push({ role: "user", content: msg.body, timestamp: Date.now() });
@@ -208,64 +178,59 @@ client.on("message", async (msg) => {
     const delay = Number(process.env.REPLY_DELAY_MS || 4000);
     await new Promise((resolve) => setTimeout(resolve, delay));
     const latestSettings = settings();
-    if (!latestSettings.enabled) { console.log("AI disabled while waiting. Reply cancelled."); return; }
-    if (quotaRemaining(latestSettings) <= 0) { console.log("Daily AI reply quota reached while waiting. Reply cancelled."); return; }
+    if (!latestSettings.enabled || quotaRemaining(latestSettings) <= 0) return;
     if (reply) {
-      await msg.reply(reply); recordReply(); console.log("Reply sent successfully.");
+      await msg.reply(reply);
+      recordReply();
       const latest = chats();
       latest[chatId] = latest[chatId] || { enabled: true, messages: [] };
       latest[chatId].messages = latest[chatId].messages || [];
       latest[chatId].messages.push({ role: "assistant", content: reply, timestamp: Date.now() });
       latest[chatId].lastReplyAt = Date.now();
       writeJson(CHATS, latest);
+      console.log("Reply sent successfully.");
     }
-  } catch (e) { lastError = e.message || String(e); console.error("Auto-reply error:", lastError); }
-  finally { pending.delete(chatId); }
+  } catch (e) {
+    lastError = e.message || String(e);
+    console.error("Auto-reply error:", lastError);
+  } finally {
+    pending.delete(chatId);
+  }
 });
 
-app.get("/api/health", (req, res) => res.json({ ok: true, service: "whatsapp-ai-agent" }));
-app.use("/api", authorized);
-
+app.get("/api/health", (req, res) => res.json({ ok: true, service: "whatsapp-ai-agent", localOnly: true }));
 app.get("/api/status", (req, res) => {
   const s = settings();
   res.json({ clientReady, clientState, qrVisible, lastError, settings: s, groqConfigured: !!groq, geminiConfigured: !!gemini, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), quotaRemaining: quotaRemaining(s) });
 });
-
 app.get("/api/stats", (req, res) => {
-  const s = settings(); const all = chats(); const chatList = Object.values(all);
-  const totalMessages = chatList.reduce((sum, c) => sum + (c.messages || []).length, 0);
-  const totalChats = chatList.length; const activeChats = chatList.filter((c) => c.enabled !== false).length;
-  res.json({ today: { incoming: Number(s.usage.incoming || 0), replies: Number(s.usage.replies || 0), quota: Number(s.dailyQuota || 0), remaining: quotaRemaining(s), inputTokens: Number(s.usage.inputTokens || 0), outputTokens: Number(s.usage.outputTokens || 0), totalTokens: Number(s.usage.totalTokens || 0) }, allTime: { chats: totalChats, activeChats, storedMessages: totalMessages }, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
+  const s = settings(); const all = chats(); const list = Object.values(all);
+  res.json({ today: { incoming: Number(s.usage.incoming || 0), replies: Number(s.usage.replies || 0), quota: Number(s.dailyQuota || 0), remaining: quotaRemaining(s), inputTokens: Number(s.usage.inputTokens || 0), outputTokens: Number(s.usage.outputTokens || 0), totalTokens: Number(s.usage.totalTokens || 0) }, allTime: { chats: list.length, activeChats: list.filter(c => c.enabled !== false).length, storedMessages: list.reduce((sum, c) => sum + (c.messages || []).length, 0) }, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
 });
-
 app.get("/api/settings", (req, res) => res.json(settings()));
-
 app.post("/api/settings", (req, res) => {
   const current = settings();
-  const allowedMoods = Object.keys(MOODS);
-  const requestedQuota = Number(req.body.dailyQuota);
-  const requestedMaxTokens = Number(req.body.maxTokens);
-  const provider = ["groq", "gemini"].includes(req.body.provider) ? req.body.provider : current.provider;
-  const groqModel = GROQ_MODELS.includes(req.body.groqModel) ? req.body.groqModel : current.groqModel;
+  const quota = Number(req.body.dailyQuota); const maxTokens = Number(req.body.maxTokens);
   const next = {
-    ...current, ...req.body, enabled: !!req.body.enabled, provider, groqModel,
+    ...current, ...req.body,
+    enabled: !!req.body.enabled,
+    provider: ["groq", "gemini"].includes(req.body.provider) ? req.body.provider : current.provider,
+    groqModel: GROQ_MODELS.includes(req.body.groqModel) ? req.body.groqModel : current.groqModel,
     geminiModel: typeof req.body.geminiModel === "string" && req.body.geminiModel.trim() ? req.body.geminiModel.trim() : current.geminiModel,
-    maxTokens: Number.isFinite(requestedMaxTokens) && requestedMaxTokens >= 50 ? Math.min(Math.floor(requestedMaxTokens), 1000) : current.maxTokens,
+    maxTokens: Number.isFinite(maxTokens) && maxTokens >= 50 ? Math.min(Math.floor(maxTokens), 1000) : current.maxTokens,
     mode: ["everyone", "selected"].includes(req.body.mode) ? req.body.mode : current.mode,
-    mood: allowedMoods.includes(req.body.mood) ? req.body.mood : current.mood,
-    dailyQuota: Number.isFinite(requestedQuota) && requestedQuota >= 1 ? Math.min(Math.floor(requestedQuota), 10000) : current.dailyQuota,
+    mood: Object.keys(MOODS).includes(req.body.mood) ? req.body.mood : current.mood,
+    dailyQuota: Number.isFinite(quota) && quota >= 1 ? Math.min(Math.floor(quota), 10000) : current.dailyQuota,
     systemPrompt: typeof req.body.systemPrompt === "string" ? req.body.systemPrompt.slice(0, 4000) : current.systemPrompt,
     usage: current.usage,
   };
   writeJson(SETTINGS, next);
   res.json(next);
 });
-
 app.get("/api/chats", (req, res) => {
   const all = chats();
   res.json(Object.entries(all).map(([id, c]) => ({ id, enabled: c.enabled !== false, messageCount: (c.messages || []).length, lastMessageAt: c.lastMessageAt, lastReplyAt: c.lastReplyAt })));
 });
-
 app.post("/api/chats/:id/toggle", (req, res) => {
   const id = decodeURIComponent(req.params.id); const all = chats();
   all[id] = all[id] || { enabled: true, messages: [] };
@@ -274,9 +239,5 @@ app.post("/api/chats/:id/toggle", (req, res) => {
   res.json({ ok: true, id, enabled: all[id].enabled });
 });
 
-const PORT = Number(process.env.PORT || 3000);
-app.listen(PORT, () => {
-  console.log(`Starting WhatsApp client...`);
-  console.log(`Dashboard: http://localhost:${PORT}`);
-  client.initialize();
-});
+app.listen(PORT, HOST, () => console.log(`Dashboard: http://${HOST}:${PORT}`));
+client.initialize().catch((error) => { lastError = error.message || String(error); console.error("WhatsApp initialization failed:", lastError); });
