@@ -89,6 +89,19 @@ let clientReady = false;
 let qrVisible = false;
 let clientState = "starting";
 let lastError = "";
+let waDiagnostics = {
+  checkedAt: null,
+  label: "not_checked",
+  url: null,
+  title: null,
+  readyState: null,
+  wwebjs: null,
+  store: null,
+  webpackChunk: null,
+  bodyText: null,
+  error: null,
+};
+let diagnosticTimer = null;
 const startedAt = Date.now();
 const pending = new Set();
 
@@ -108,6 +121,60 @@ const client = new Client({
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   },
 });
+
+async function runWhatsAppDiagnostic(label = "probe") {
+  try {
+    const page = client.pupPage;
+    if (!page) throw new Error("client.pupPage is not available yet");
+
+    const pageInfo = await page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      readyState: document.readyState,
+      wwebjs: typeof window.WWebJS,
+      store: typeof window.Store,
+      webpackChunk: typeof window.webpackChunkwhatsapp_web_client,
+      bodyText: (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 300),
+    }));
+
+    waDiagnostics = {
+      checkedAt: new Date().toISOString(),
+      label,
+      ...pageInfo,
+      error: null,
+    };
+
+    console.log(
+      `WhatsApp diagnostic [${label}]: ` +
+      `readyState=${pageInfo.readyState}, WWebJS=${pageInfo.wwebjs}, ` +
+      `Store=${pageInfo.store}, webpackChunk=${pageInfo.webpackChunk}, ` +
+      `url=${pageInfo.url}`
+    );
+    console.log(`WhatsApp diagnostic title: ${pageInfo.title}`);
+    console.log(`WhatsApp diagnostic body: ${pageInfo.bodyText}`);
+  } catch (error) {
+    waDiagnostics = {
+      ...waDiagnostics,
+      checkedAt: new Date().toISOString(),
+      label,
+      error: error.message || String(error),
+    };
+    console.error(`WhatsApp diagnostic [${label}] failed:`, error.message || error);
+  }
+}
+
+function startWhatsAppDiagnostics() {
+  if (diagnosticTimer) clearInterval(diagnosticTimer);
+  runWhatsAppDiagnostic("authenticated");
+  diagnosticTimer = setInterval(() => {
+    if (clientReady) {
+      clearInterval(diagnosticTimer);
+      diagnosticTimer = null;
+      return;
+    }
+    runWhatsAppDiagnostic("waiting_for_ready");
+  }, 10000);
+}
 
 client.on("loading_screen", (percent, message) => {
   clientState = `loading:${percent}`;
@@ -129,12 +196,16 @@ client.on("authenticated", () => {
   qrVisible = false;
   clientState = "authenticated";
   console.log("WhatsApp authenticated. Waiting for WhatsApp Web to finish loading...");
+  startWhatsAppDiagnostics();
 });
 
-client.on("ready", () => {
+client.on("ready", async () => {
   clientReady = true;
   qrVisible = false;
   clientState = "ready";
+  if (diagnosticTimer) clearInterval(diagnosticTimer);
+  diagnosticTimer = null;
+  await runWhatsAppDiagnostic("ready");
   console.log("WhatsApp AI Agent ready.");
 });
 
@@ -149,6 +220,8 @@ client.on("disconnected", (reason) => {
   clientReady = false;
   clientState = "disconnected";
   lastError = String(reason);
+  if (diagnosticTimer) clearInterval(diagnosticTimer);
+  diagnosticTimer = null;
   console.log("Disconnected:", reason);
 });
 
@@ -238,7 +311,7 @@ client.on("message", async (msg) => {
 app.get("/api/health", (req, res) => res.json({ ok: true, service: "whatsapp-ai-agent", localOnly: true }));
 app.get("/api/status", (req, res) => {
   const s = settings();
-  res.json({ clientReady, clientState, qrVisible, lastError, settings: s, groqConfigured: !!groq, geminiConfigured: !!gemini, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), quotaRemaining: quotaRemaining(s) });
+  res.json({ clientReady, clientState, qrVisible, lastError, diagnostics: waDiagnostics, settings: s, groqConfigured: !!groq, geminiConfigured: !!gemini, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), quotaRemaining: quotaRemaining(s) });
 });
 app.get("/api/stats", (req, res) => {
   const s = settings(); const all = chats(); const list = Object.values(all);
