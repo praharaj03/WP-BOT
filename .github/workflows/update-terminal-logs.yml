@@ -1,0 +1,65 @@
+name: Update terminal output
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  update-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch server terminal output
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path("server.js")
+          text = path.read_text(encoding="utf-8")
+
+          marker = "// TERMINAL_MESSAGE_ONLY_PATCH"
+          if marker not in text:
+              anchor = 'require("dotenv").config();'
+              logger = r'''\n\n// TERMINAL_MESSAGE_ONLY_PATCH\nconst ORIGINAL_CONSOLE_LOG = console.log.bind(console);\nconsole.log = () => {};\nconsole.warn = () => {};\nconsole.error = () => {};\n\nfunction getTerminalMessageId(msg) {\n  return msg?.id?._serialized || msg?.id?.$1 || msg?.id?.toString?.() || "unknown";\n}\n\nfunction terminalMessage(msg, replyText) {\n  ORIGINAL_CONSOLE_LOG(\n    `[MSG] ${getTerminalMessageId(msg)} | Message: ${msg?.body || ""} | Reply: ${replyText || ""}`\n  );\n}\n'''
+              if anchor not in text:
+                  raise SystemExit("Could not find dotenv anchor in server.js")
+              text = text.replace(anchor, anchor + logger, 1)
+
+          send_fn = 'if (sent && sent.id) return { ok: true, method: attempt.name };'
+          send_replacement = 'if (sent && sent.id) { terminalMessage(msg, replyText); return { ok: true, method: attempt.name }; }'
+          if send_fn in text:
+              text = text.replace(send_fn, send_replacement, 1)
+          else:
+              # Current whatsapp-web.js may resolve sendMessage without a message object.
+              no_object = 'return { ok: true, method: `${attempt.name}:no-object` };'
+              no_object_replacement = 'terminalMessage(msg, replyText);\n      return { ok: true, method: `${attempt.name}:no-object` };'
+              if no_object in text and 'terminalMessage(msg, replyText);' not in text:
+                  text = text.replace(no_object, no_object_replacement, 1)
+              elif 'terminalMessage(msg, replyText);' not in text:
+                  raise SystemExit("Could not find send success path in server.js")
+
+          path.write_text(text, encoding="utf-8")
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js
+          if git diff --cached --quiet; then
+            echo "No server.js changes needed."
+            rm -f .github/workflows/update-terminal-logs.yml
+            git add .github/workflows/update-terminal-logs.yml
+            git commit -m "chore: remove terminal log patch workflow" || true
+          else
+            git commit -m "chore: show only WhatsApp message and reply in terminal"
+            git rm .github/workflows/update-terminal-logs.yml
+            git commit -m "chore: remove one-time terminal log patch workflow"
+          fi
+          git push
