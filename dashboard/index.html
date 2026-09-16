@@ -12,68 +12,15 @@
 </head>
 <body>
 <main class="shell">
-  <header class="top">
-    <div class="brand"><div class="logo">WA</div><div><div class="eyebrow">Control Center</div><div class="title">Personal WhatsApp AI</div><p class="sub">Fast replies, low token usage, your rules.</p></div></div>
-    <div class="connection"><span id="dot" class="dot"></span><span id="state">Not connected</span></div>
-  </header>
-
-  <section class="card" id="connectCard">
-    <div class="cardhead"><div><div class="label">Backend connection</div><div class="muted">Connect this dashboard to your Windows agent.</div></div></div>
-    <div class="connectionForm"><input id="backend" placeholder="https://your-backend.example.com"><input id="token" type="password" placeholder="CONTROL_TOKEN"><button class="btn" onclick="connect()">Connect</button></div>
-    <p id="error" class="danger"></p>
-  </section>
-
-  <section id="app" class="hidden">
-    <div class="grid">
-      <div class="card span-12">
-        <div class="cardhead"><div><div class="label">Live stats</div><div class="muted">Today’s activity, token usage and current agent state.</div></div><span class="muted" id="uptime">Uptime —</span></div>
-        <div class="statgrid">
-          <div class="stat"><div class="name">AI replies</div><div class="num" id="replies">0</div></div>
-          <div class="stat"><div class="name">Incoming</div><div class="num" id="incoming">0</div></div>
-          <div class="stat"><div class="name">Quota left</div><div class="num" id="remaining">0</div></div>
-          <div class="stat"><div class="name">Input tokens</div><div class="num" id="inputTokens">0</div></div>
-          <div class="stat"><div class="name">Output tokens</div><div class="num" id="outputTokens">0</div></div>
-          <div class="stat"><div class="name">Total tokens</div><div class="num" id="totalTokens">0</div></div>
-        </div>
-        <div class="quotaRow"><span id="quotaText">0 / 100 replies used today</span><span id="quotaPercent">0%</span></div>
-        <div class="progress"><i id="quotaBar"></i></div>
-      </div>
-
-      <div class="card span-8">
-        <div class="cardhead"><div><div class="label">AI Auto Reply</div><div class="muted">Automatically reply to incoming private messages.</div></div><label class="switch"><input id="enabled" type="checkbox"><span class="slider"></span></label></div>
-        <div class="field"><label>AI provider</label><div class="providerGrid"><button class="provider" id="groqProvider" onclick="setProvider('groq')"><strong>Groq</strong><span>Fast + low-cost • GPT-OSS 20B</span></button><button class="provider" id="geminiProvider" onclick="setProvider('gemini')"><strong>Gemini</strong><span>Alternative provider • Gemini Flash</span></button></div></div>
-        <div class="field"><label>Groq model</label><select id="groqModel"><option value="openai/gpt-oss-20b">GPT-OSS 20B — recommended</option><option value="openai/gpt-oss-120b">GPT-OSS 120B — larger model</option><option value="qwen/qwen3-32b">Qwen 3 32B — alternative</option></select></div>
-        <div class="field"><label>Gemini model</label><input id="geminiModel" placeholder="gemini-3.6-flash"></div>
-        <div class="field"><label>Max reply tokens</label><input id="maxTokens" type="number" min="50" max="1000" step="10" placeholder="180"><div class="muted" style="margin-top:6px">Keeps WhatsApp replies short and controls output-token usage.</div></div>
-        <div class="field"><label>Reply scope</label><select id="mode"><option value="everyone">Everyone — private chats</option><option value="selected">Selected chats only</option></select></div>
-        <div class="field"><label>Daily reply quota</label><input id="dailyQuota" type="number" min="1" max="10000" step="1" placeholder="100"><div class="muted" style="margin-top:6px">Maximum AI replies per day.</div></div>
-        <div class="actions"><button class="btn secondary" onclick="save()">Save settings</button></div>
-      </div>
-
-      <div class="card span-4">
-        <div class="cardhead"><div><div class="label">Current mood</div><div class="muted">Choose how the agent should sound.</div></div></div>
-        <div class="moods" id="moods">
-          <button class="mood" data-mood="casual"><strong>Casual</strong><span>Relaxed & friendly</span></button>
-          <button class="mood" data-mood="formal"><strong>Formal</strong><span>Polite & professional</span></button>
-          <button class="mood" data-mood="sad"><strong>Sad</strong><span>Quiet & melancholic</span></button>
-          <button class="mood" data-mood="romantic"><strong>Romantic</strong><span>Warm & affectionate</span></button>
-          <button class="mood" data-mood="vulgar"><strong>Vulgar</strong><span>Strong slang</span></button>
-          <button class="mood" data-mood="angry"><strong>Angry</strong><span>Blunt & frustrated</span></button>
-        </div>
-      </div>
-
-      <div class="card span-12">
-        <div class="cardhead"><div><div class="label">Reply personality</div><div class="muted">Optional extra instruction. The selected mood is applied automatically.</div></div></div>
-        <textarea id="prompt" placeholder="Example: Keep replies short and use emojis occasionally."></textarea>
-        <div class="actions"><button class="btn" onclick="save()">Save personality</button></div>
-      </div>
-
-      <div class="card span-12">
-        <div class="cardhead"><div><div class="label">Known chats</div><div class="muted">Used when “Selected chats only” is enabled.</div></div></div>
-        <div id="chats"></div>
-      </div>
-    </div>
-  </section>
+  <header class="top"><div class="brand"><div class="logo">WA</div><div><div class="eyebrow">Control Center</div><div class="title">Personal WhatsApp AI</div><p class="sub">Fast replies, low token usage, your rules.</p></div></div><div class="connection"><span id="dot" class="dot"></span><span id="state">Not connected</span></div></header>
+  <section class="card"><div class="cardhead"><div><div class="label">Backend connection</div><div class="muted">Connect this dashboard to your Windows agent.</div></div></div><div class="connectionForm"><input id="backend" placeholder="https://your-backend.example.com"><input id="token" type="password" placeholder="CONTROL_TOKEN"><button class="btn" onclick="connect()">Connect</button></div><p id="error" class="danger"></p></section>
+  <section id="app" class="hidden"><div class="grid">
+    <div class="card span-12"><div class="cardhead"><div><div class="label">Live stats</div><div class="muted">Today’s activity, token usage and current agent state.</div></div><span class="muted" id="uptime">Uptime —</span></div><div class="statgrid"><div class="stat"><div class="name">AI replies</div><div class="num" id="replies">0</div></div><div class="stat"><div class="name">Incoming</div><div class="num" id="incoming">0</div></div><div class="stat"><div class="name">Quota left</div><div class="num" id="remaining">0</div></div><div class="stat"><div class="name">Input tokens</div><div class="num" id="inputTokens">0</div></div><div class="stat"><div class="name">Output tokens</div><div class="num" id="outputTokens">0</div></div><div class="stat"><div class="name">Total tokens</div><div class="num" id="totalTokens">0</div></div></div><div class="quotaRow"><span id="quotaText">0 / 100 replies used today</span><span id="quotaPercent">0%</span></div><div class="progress"><i id="quotaBar"></i></div></div>
+    <div class="card span-8"><div class="cardhead"><div><div class="label">AI Auto Reply</div><div class="muted">Automatically reply to incoming private messages.</div></div><label class="switch"><input id="enabled" type="checkbox"><span class="slider"></span></label></div><div class="field"><label>AI provider</label><div class="providerGrid"><button class="provider" id="groqProvider" onclick="setProvider('groq')"><strong>Groq</strong><span>Fast + low-cost • GPT-OSS 20B</span></button><button class="provider" id="geminiProvider" onclick="setProvider('gemini')"><strong>Gemini</strong><span>Alternative provider • Gemini Flash</span></button></div></div><div class="field"><label>Groq model</label><select id="groqModel"><option value="openai/gpt-oss-20b">GPT-OSS 20B — recommended</option><option value="openai/gpt-oss-120b">GPT-OSS 120B — larger model</option><option value="qwen/qwen3-32b">Qwen 3 32B — alternative</option></select></div><div class="field"><label>Gemini model</label><input id="geminiModel" placeholder="gemini-3.6-flash"></div><div class="field"><label>Max reply tokens</label><input id="maxTokens" type="number" min="50" max="1000" step="10" placeholder="180"><div class="muted" style="margin-top:6px">Keeps WhatsApp replies short and controls output-token usage.</div></div><div class="field"><label>Reply scope</label><select id="mode"><option value="everyone">Everyone — private chats</option><option value="selected">Selected chats only</option></select></div><div class="field"><label>Daily reply quota</label><input id="dailyQuota" type="number" min="1" max="10000" step="1" placeholder="100"><div class="muted" style="margin-top:6px">Maximum AI replies per day.</div></div><div class="actions"><button class="btn secondary" onclick="save()">Save settings</button></div></div>
+    <div class="card span-4"><div class="cardhead"><div><div class="label">Current mood</div><div class="muted">Choose how the agent should sound.</div></div></div><div class="moods"><button class="mood" data-mood="casual"><strong>Casual</strong><span>Relaxed & friendly</span></button><button class="mood" data-mood="formal"><strong>Formal</strong><span>Polite & professional</span></button><button class="mood" data-mood="sad"><strong>Sad</strong><span>Quiet & melancholic</span></button><button class="mood" data-mood="romantic"><strong>Romantic</strong><span>Warm & affectionate</span></button><button class="mood" data-mood="vulgar"><strong>Vulgar</strong><span>Strong slang</span></button><button class="mood" data-mood="angry"><strong>Angry</strong><span>Blunt & frustrated</span></button></div></div>
+    <div class="card span-12"><div class="cardhead"><div><div class="label">Reply personality</div><div class="muted">Optional extra instruction. The selected mood is applied automatically.</div></div></div><textarea id="prompt" placeholder="Example: Keep replies short and use emojis occasionally."></textarea><div class="actions"><button class="btn" onclick="save()">Save personality</button></div></div>
+    <div class="card span-12"><div class="cardhead"><div><div class="label">Known chats</div><div class="muted">Used when “Selected chats only” is enabled.</div></div></div><div id="chats"></div></div>
+  </div></section>
   <div class="footer">Windows backend • Groq / Gemini • WhatsApp Web</div>
 </main>
 <script>
@@ -86,7 +33,7 @@ function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':
 function setProvider(p){selectedProvider=p;renderProvider()}
 function renderProvider(){$('groqProvider').classList.toggle('active',selectedProvider==='groq');$('geminiProvider').classList.toggle('active',selectedProvider==='gemini');$('groqModel').disabled=selectedProvider!=='groq';$('geminiModel').disabled=selectedProvider!=='gemini'}
 function renderStats(stats){const t=stats.today||{};const used=Number(t.replies||0),quota=Number(t.quota||0),pct=quota?Math.min(100,Math.round(used/quota*100)):0;$('replies').textContent=used;$('incoming').textContent=t.incoming||0;$('remaining').textContent=t.remaining??0;$('inputTokens').textContent=formatTokens(t.inputTokens);$('outputTokens').textContent=formatTokens(t.outputTokens);$('totalTokens').textContent=formatTokens(t.totalTokens);$('quotaText').textContent=`${used} / ${quota} replies used today`;$('quotaPercent').textContent=`${pct}%`;$('quotaBar').style.width=pct+'%';$('uptime').textContent='Uptime '+formatUptime(stats.uptimeSeconds)}
-async function load(){try{const s=await api('/api/status');const stats=await api('/api/stats');$('app').classList.remove('hidden');$('error').textContent='';$('state').textContent=s.clientState+` • ${s.settings.provider==='groq'?'Groq':'Gemini'}`;$('dot').className='dot '+(s.clientReady?'on':'');$('enabled').checked=s.settings.enabled;$('mode').value=s.settings.mode;$('dailyQuota').value=s.settings.dailyQuota||100;$('maxTokens').value=s.settings.maxTokens||180;$('prompt').value=s.settings.systemPrompt||'';$('geminiModel').value=s.settings.geminiModel||'gemini-3.6-flash';$('groqModel').value=s.settings.groqModel||'openai/gpt-oss-20b';selectedMood=s.settings.mood||'casual';selectedProvider=s.settings.provider||'groq';document.querySelectorAll('.mood').forEach(x=>x.classList.toggle('active',x.dataset.mood===selectedMood));renderProvider();renderStats(stats);const c=await api('/api/chats');$('chatCount')?.textContent=c.length;$('chats').innerHTML=c.length?c.map(x=>`<div class="chat"><div class="chatname"><b>${escapeHtml(x.id.replace('@c.us',''))}</b><div class="muted">${x.messageCount} stored messages</div></div><button class="btn ${x.enabled?'':'secondary'}" onclick="toggleChat('${encodeURIComponent(x.id)}',${!x.enabled})">${x.enabled?'Enabled':'Disabled'}</button></div>`).join(''):'<p class="muted">No chats recorded yet.</p>'}catch(e){$('error').textContent=e.message;$('app').classList.add('hidden');$('dot').className='dot';$('state').textContent='Not connected'}}
+async function load(){try{const s=await api('/api/status');const stats=await api('/api/stats');$('app').classList.remove('hidden');$('error').textContent='';$('state').textContent=s.clientState+` • ${s.settings.provider==='groq'?'Groq':'Gemini'}`;$('dot').className='dot '+(s.clientReady?'on':'');$('enabled').checked=s.settings.enabled;$('mode').value=s.settings.mode;$('dailyQuota').value=s.settings.dailyQuota||100;$('maxTokens').value=s.settings.maxTokens||180;$('prompt').value=s.settings.systemPrompt||'';$('geminiModel').value=s.settings.geminiModel||'gemini-3.6-flash';$('groqModel').value=s.settings.groqModel||'openai/gpt-oss-20b';selectedMood=s.settings.mood||'casual';selectedProvider=s.settings.provider||'groq';document.querySelectorAll('.mood').forEach(x=>x.classList.toggle('active',x.dataset.mood===selectedMood));renderProvider();renderStats(stats);const c=await api('/api/chats');$('chats').innerHTML=c.length?c.map(x=>`<div class="chat"><div class="chatname"><b>${escapeHtml(x.id.replace('@c.us',''))}</b><div class="muted">${x.messageCount} stored messages</div></div><button class="btn ${x.enabled?'':'secondary'}" onclick="toggleChat('${encodeURIComponent(x.id)}',${!x.enabled})">${x.enabled?'Enabled':'Disabled'}</button></div>`).join(''):'<p class="muted">No chats recorded yet.</p>'}catch(e){$('error').textContent=e.message;$('app').classList.add('hidden');$('dot').className='dot';$('state').textContent='Not connected'}}
 async function connect(){base=$('backend').value.trim().replace(/\/$/,'');token=$('token').value;if(!base||!token){$('error').textContent='Backend URL and token are required.';return}localStorage.setItem(backendKey,base);localStorage.setItem(tokenKey,token);await load()}
 async function save(){try{await api('/api/settings',{method:'POST',body:JSON.stringify({enabled:$('enabled').checked,mode:$('mode').value,provider:selectedProvider,groqModel:$('groqModel').value,geminiModel:$('geminiModel').value,maxTokens:Number($('maxTokens').value),mood:selectedMood,dailyQuota:Number($('dailyQuota').value),systemPrompt:$('prompt').value})});await load()}catch(e){$('error').textContent=e.message)}}
 async function toggleChat(id,v){try{await api('/api/chats/'+id+'/toggle',{method:'POST',body:JSON.stringify({enabled:v})});await load()}catch(e){$('error').textContent=e.message)}}
