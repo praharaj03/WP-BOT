@@ -98,6 +98,8 @@ const chromeCandidates = [
 ];
 const executablePath = chromeCandidates.find(fs.existsSync);
 
+console.log(`Chrome executable: ${executablePath || "Puppeteer's bundled Chromium"}`);
+
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: path.join(__dirname, ".wwebjs_auth") }),
   puppeteer: {
@@ -107,15 +109,50 @@ const client = new Client({
   },
 });
 
+client.on("loading_screen", (percent, message) => {
+  clientState = `loading:${percent}`;
+  console.log(`WhatsApp loading: ${percent}% - ${message}`);
+});
+
+client.on("change_state", (state) => {
+  clientState = String(state).toLowerCase();
+  console.log(`WhatsApp state changed: ${state}`);
+});
+
 client.on("qr", (qr) => {
   qrVisible = true; clientState = "scan_required";
   console.log("\nScan this QR code with WhatsApp > Linked devices > Link a device:\n");
   qrcode.generate(qr, { small: true });
 });
-client.on("authenticated", () => { qrVisible = false; clientState = "authenticated"; console.log("WhatsApp authenticated."); });
-client.on("ready", () => { clientReady = true; qrVisible = false; clientState = "ready"; console.log("WhatsApp AI Agent ready."); });
-client.on("auth_failure", (msg) => { clientReady = false; clientState = "auth_failure"; lastError = msg; console.error("WhatsApp authentication failed:", msg); });
-client.on("disconnected", (reason) => { clientReady = false; clientState = "disconnected"; lastError = String(reason); console.log("Disconnected:", reason); });
+
+client.on("authenticated", () => {
+  qrVisible = false;
+  clientState = "authenticated";
+  console.log("WhatsApp authenticated. Waiting for WhatsApp Web to finish loading...");
+});
+
+client.on("ready", () => {
+  clientReady = true;
+  qrVisible = false;
+  clientState = "ready";
+  console.log("WhatsApp AI Agent ready.");
+});
+
+client.on("auth_failure", (msg) => {
+  clientReady = false;
+  clientState = "auth_failure";
+  lastError = msg;
+  console.error("WhatsApp authentication failed:", msg);
+});
+
+client.on("disconnected", (reason) => {
+  clientReady = false;
+  clientState = "disconnected";
+  lastError = String(reason);
+  console.log("Disconnected:", reason);
+});
+
+client.on("remote_session_saved", () => console.log("WhatsApp session saved."));
 
 function shouldReply(msg, s) {
   if (!s.enabled || !msg.body?.trim() || msg.fromMe || msg.from.endsWith("@g.us") || msg.isStatus) return false;
@@ -240,4 +277,20 @@ app.post("/api/chats/:id/toggle", (req, res) => {
 });
 
 app.listen(PORT, HOST, () => console.log(`Dashboard: http://${HOST}:${PORT}`));
-client.initialize().catch((error) => { lastError = error.message || String(error); console.error("WhatsApp initialization failed:", lastError); });
+
+console.log("Starting WhatsApp client initialization...");
+const initializationTimeout = setTimeout(() => {
+  if (!clientReady) {
+    lastError = `WhatsApp client has not reached ready state after ${Math.floor((Date.now() - startedAt) / 1000)} seconds (state: ${clientState}). Check the terminal for loading/state diagnostics.`;
+    console.error(lastError);
+  }
+}, 90000);
+
+client.initialize()
+  .then(() => console.log("WhatsApp client initialize() completed."))
+  .catch((error) => {
+    clearTimeout(initializationTimeout);
+    lastError = error.message || String(error);
+    clientState = "initialization_failed";
+    console.error("WhatsApp initialization failed:", lastError);
+  });
