@@ -24,11 +24,8 @@ if (!fs.existsSync(DATA)) fs.mkdirSync(DATA, { recursive: true });
 if (!fs.existsSync(CHATS)) fs.writeFileSync(CHATS, "{}");
 
 function readJson(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return fallback;
-  }
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch { return fallback; }
 }
 
 function writeJson(file, data) {
@@ -44,16 +41,8 @@ const DEFAULT_SETTINGS = {
   maxTokens: 180,
   mood: "casual",
   dailyQuota: 100,
-  systemPrompt:
-    "Reply naturally and casually like me. Keep replies concise unless more detail is necessary.",
-  usage: {
-    date: "",
-    replies: 0,
-    incoming: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-  },
+  systemPrompt: "Reply naturally and casually like me. Keep replies concise unless more detail is necessary.",
+  usage: { date: "", replies: 0, incoming: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
 };
 
 const MOODS = {
@@ -65,37 +54,23 @@ const MOODS = {
   angry: "Angry: irritated, blunt, and firm. Express frustration naturally without threats, hate, or harassment.",
 };
 
-const GROQ_MODELS = [
-  "openai/gpt-oss-20b",
-  "openai/gpt-oss-120b",
-  "qwen/qwen3-32b",
-];
+const GROQ_MODELS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3-32b"];
 
 function settings() {
   const stored = readJson(SETTINGS, {});
-  const merged = {
-    ...DEFAULT_SETTINGS,
-    ...stored,
-    usage: { ...DEFAULT_SETTINGS.usage, ...(stored.usage || {}) },
-  };
-
+  const merged = { ...DEFAULT_SETTINGS, ...stored, usage: { ...DEFAULT_SETTINGS.usage, ...(stored.usage || {}) } };
   const today = new Date().toISOString().slice(0, 10);
   if (merged.usage.date !== today) {
     merged.usage = { date: today, replies: 0, incoming: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     writeJson(SETTINGS, merged);
   }
-
   return merged;
 }
 
-function chats() {
-  return readJson(CHATS, {});
-}
+function chats() { return readJson(CHATS, {}); }
 
 function recordIncoming() {
-  const s = settings();
-  s.usage.incoming += 1;
-  writeJson(SETTINGS, s);
+  const s = settings(); s.usage.incoming += 1; writeJson(SETTINGS, s);
 }
 
 function recordUsage(usage) {
@@ -106,11 +81,7 @@ function recordUsage(usage) {
   writeJson(SETTINGS, s);
 }
 
-function recordReply() {
-  const s = settings();
-  s.usage.replies += 1;
-  writeJson(SETTINGS, s);
-}
+function recordReply() { const s = settings(); s.usage.replies += 1; writeJson(SETTINGS, s); }
 
 function quotaRemaining(s = settings()) {
   const quota = Number(s.dailyQuota);
@@ -118,13 +89,8 @@ function quotaRemaining(s = settings()) {
   return Math.max(0, quota - Number(s.usage.replies || 0));
 }
 
-const gemini = process.env.GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-  : null;
-
-const groq = process.env.GROQ_API_KEY
-  ? new Groq({ apiKey: process.env.GROQ_API_KEY })
-  : null;
+const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
 let clientReady = false;
 let qrVisible = false;
@@ -133,17 +99,19 @@ let lastError = "";
 const startedAt = Date.now();
 const pending = new Set();
 
-const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
+const CONTROL_TOKEN = (process.env.CONTROL_TOKEN || "").trim();
 
 function authorized(req, res, next) {
   if (!CONTROL_TOKEN) {
     return res.status(503).json({ error: "CONTROL_TOKEN is not configured on the Windows backend." });
   }
 
-  const supplied = req.get("x-control-token");
-  if (!supplied || supplied.length !== CONTROL_TOKEN.length ||
-      !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(CONTROL_TOKEN))) {
-    return res.status(401).json({ error: "Unauthorized" });
+  const supplied = String(req.get("x-control-token") || "").trim();
+  const expected = Buffer.from(CONTROL_TOKEN, "utf8");
+  const actual = Buffer.from(supplied, "utf8");
+
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+    return res.status(401).json({ error: "Invalid CONTROL_TOKEN. Check the token in your Windows .env and dashboard." });
   }
 
   next();
@@ -153,7 +121,6 @@ const chromeCandidates = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
 ];
-
 const executablePath = chromeCandidates.find(fs.existsSync);
 
 const client = new Client({
@@ -166,56 +133,25 @@ const client = new Client({
 });
 
 client.on("qr", (qr) => {
-  qrVisible = true;
-  clientState = "scan_required";
+  qrVisible = true; clientState = "scan_required";
   console.log("\nScan this QR code with WhatsApp > Linked devices > Link a device:\n");
   qrcode.generate(qr, { small: true });
 });
-
-client.on("authenticated", () => {
-  qrVisible = false;
-  clientState = "authenticated";
-  console.log("WhatsApp authenticated.");
-});
-
-client.on("ready", () => {
-  clientReady = true;
-  qrVisible = false;
-  clientState = "ready";
-  console.log("WhatsApp AI Agent ready.");
-});
-
-client.on("auth_failure", (msg) => {
-  clientReady = false;
-  clientState = "auth_failure";
-  lastError = msg;
-  console.error("WhatsApp authentication failed:", msg);
-});
-
-client.on("disconnected", (reason) => {
-  clientReady = false;
-  clientState = "disconnected";
-  lastError = String(reason);
-  console.log("Disconnected:", reason);
-});
+client.on("authenticated", () => { qrVisible = false; clientState = "authenticated"; console.log("WhatsApp authenticated."); });
+client.on("ready", () => { clientReady = true; qrVisible = false; clientState = "ready"; console.log("WhatsApp AI Agent ready."); });
+client.on("auth_failure", (msg) => { clientReady = false; clientState = "auth_failure"; lastError = msg; console.error("WhatsApp authentication failed:", msg); });
+client.on("disconnected", (reason) => { clientReady = false; clientState = "disconnected"; lastError = String(reason); console.log("Disconnected:", reason); });
 
 function shouldReply(msg, s) {
-  if (!s.enabled) return false;
-  if (!msg.body?.trim()) return false;
-  if (msg.fromMe) return false;
-  if (msg.from.endsWith("@g.us")) return false;
-  if (msg.isStatus) return false;
+  if (!s.enabled || !msg.body?.trim() || msg.fromMe || msg.from.endsWith("@g.us") || msg.isStatus) return false;
   if (s.mode === "selected") return !!chats()[msg.from]?.enabled;
   return true;
 }
 
 function buildConversation(history, incoming) {
   let conversation = "";
-  for (const message of history.slice(-12)) {
-    conversation += `${message.role === "user" ? "User" : "Assistant"}: ${message.content}\n`;
-  }
-  conversation += `User: ${incoming}\n`;
-  return conversation;
+  for (const message of history.slice(-12)) conversation += `${message.role === "user" ? "User" : "Assistant"}: ${message.content}\n`;
+  return conversation + `User: ${incoming}\n`;
 }
 
 function buildPrompt(s, conversation) {
@@ -225,112 +161,57 @@ function buildPrompt(s, conversation) {
 
 async function generateGroqReply(prompt, model, maxTokens) {
   if (!groq) throw new Error("GROQ_API_KEY is missing in .env");
-
   const response = await groq.chat.completions.create({
-    model,
-    messages: [{ role: "user", content: prompt }],
-    max_completion_tokens: maxTokens,
-    temperature: 0.7,
+    model, messages: [{ role: "user", content: prompt }], max_completion_tokens: maxTokens, temperature: 0.7,
   });
-
   const usage = response.usage || {};
-  return {
-    text: response.choices?.[0]?.message?.content?.trim() || "",
-    usage: {
-      inputTokens: usage.prompt_tokens || 0,
-      outputTokens: usage.completion_tokens || 0,
-      totalTokens: usage.total_tokens || 0,
-    },
-  };
+  return { text: response.choices?.[0]?.message?.content?.trim() || "", usage: { inputTokens: usage.prompt_tokens || 0, outputTokens: usage.completion_tokens || 0, totalTokens: usage.total_tokens || 0 } };
 }
 
 async function generateGeminiReply(prompt, model, maxTokens) {
   if (!gemini) throw new Error("GEMINI_API_KEY is missing in .env");
-
-  const response = await gemini.models.generateContent({
-    model,
-    contents: prompt,
-    config: { maxOutputTokens: maxTokens },
-  });
-
+  const response = await gemini.models.generateContent({ model, contents: prompt, config: { maxOutputTokens: maxTokens } });
   const usage = response.usageMetadata || {};
-  return {
-    text: response.text?.trim() || "",
-    usage: {
-      inputTokens: usage.promptTokenCount || 0,
-      outputTokens: usage.candidatesTokenCount || 0,
-      totalTokens: usage.totalTokenCount || 0,
-    },
-  };
+  return { text: response.text?.trim() || "", usage: { inputTokens: usage.promptTokenCount || 0, outputTokens: usage.candidatesTokenCount || 0, totalTokens: usage.totalTokenCount || 0 } };
 }
 
 async function generateReply(chatId, incoming) {
   const history = chats()[chatId]?.messages || [];
   const s = settings();
   const prompt = buildPrompt(s, buildConversation(history, incoming));
-
-  if (s.provider === "gemini") {
-    return generateGeminiReply(prompt, s.geminiModel || process.env.GEMINI_MODEL || "gemini-3.6-flash", Number(s.maxTokens) || 180);
-  }
-
+  if (s.provider === "gemini") return generateGeminiReply(prompt, s.geminiModel || process.env.GEMINI_MODEL || "gemini-3.6-flash", Number(s.maxTokens) || 180);
   return generateGroqReply(prompt, s.groqModel || "openai/gpt-oss-20b", Number(s.maxTokens) || 180);
 }
 
 client.on("message", async (msg) => {
   const chatId = msg.from;
-
   try {
     const currentSettings = settings();
     if (!shouldReply(msg, currentSettings)) return;
-
     recordIncoming();
-
-    if (pending.has(chatId)) {
-      console.log(`Already processing ${chatId}`);
-      return;
-    }
-
-    if (quotaRemaining() <= 0) {
-      console.log("Daily AI reply quota reached. Reply skipped.");
-      return;
-    }
-
+    if (pending.has(chatId)) { console.log(`Already processing ${chatId}`); return; }
+    if (quotaRemaining() <= 0) { console.log("Daily AI reply quota reached. Reply skipped."); return; }
     pending.add(chatId);
     console.log(`\nIncoming message from ${chatId}`);
     console.log(`Message: ${msg.body}`);
-
     const result = await generateReply(chatId, msg.body);
     const reply = result.text;
     recordUsage(result.usage);
     console.log(`${currentSettings.provider} reply: ${reply}`);
     console.log(`Tokens: ${result.usage.totalTokens}`);
-
     const all = chats();
     const chat = all[chatId] || { enabled: true, messages: [], lastMessageAt: null, lastReplyAt: null };
     chat.messages.push({ role: "user", content: msg.body, timestamp: Date.now() });
     chat.lastMessageAt = Date.now();
     all[chatId] = chat;
     writeJson(CHATS, all);
-
     const delay = Number(process.env.REPLY_DELAY_MS || 4000);
     await new Promise((resolve) => setTimeout(resolve, delay));
-
     const latestSettings = settings();
-    if (!latestSettings.enabled) {
-      console.log("AI disabled while waiting. Reply cancelled.");
-      return;
-    }
-
-    if (quotaRemaining(latestSettings) <= 0) {
-      console.log("Daily AI reply quota reached while waiting. Reply cancelled.");
-      return;
-    }
-
+    if (!latestSettings.enabled) { console.log("AI disabled while waiting. Reply cancelled."); return; }
+    if (quotaRemaining(latestSettings) <= 0) { console.log("Daily AI reply quota reached while waiting. Reply cancelled."); return; }
     if (reply) {
-      await msg.reply(reply);
-      recordReply();
-      console.log("Reply sent successfully.");
-
+      await msg.reply(reply); recordReply(); console.log("Reply sent successfully.");
       const latest = chats();
       latest[chatId] = latest[chatId] || { enabled: true, messages: [] };
       latest[chatId].messages = latest[chatId].messages || [];
@@ -338,56 +219,23 @@ client.on("message", async (msg) => {
       latest[chatId].lastReplyAt = Date.now();
       writeJson(CHATS, latest);
     }
-  } catch (e) {
-    lastError = e.message || String(e);
-    console.error("Auto-reply error:", lastError);
-  } finally {
-    pending.delete(chatId);
-  }
+  } catch (e) { lastError = e.message || String(e); console.error("Auto-reply error:", lastError); }
+  finally { pending.delete(chatId); }
 });
 
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, service: "whatsapp-ai-agent" });
-});
-
+app.get("/api/health", (req, res) => res.json({ ok: true, service: "whatsapp-ai-agent" }));
 app.use("/api", authorized);
 
 app.get("/api/status", (req, res) => {
   const s = settings();
-  res.json({
-    clientReady,
-    clientState,
-    qrVisible,
-    lastError,
-    settings: s,
-    groqConfigured: !!groq,
-    geminiConfigured: !!gemini,
-    uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
-    quotaRemaining: quotaRemaining(s),
-  });
+  res.json({ clientReady, clientState, qrVisible, lastError, settings: s, groqConfigured: !!groq, geminiConfigured: !!gemini, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), quotaRemaining: quotaRemaining(s) });
 });
 
 app.get("/api/stats", (req, res) => {
-  const s = settings();
-  const all = chats();
-  const chatList = Object.values(all);
+  const s = settings(); const all = chats(); const chatList = Object.values(all);
   const totalMessages = chatList.reduce((sum, c) => sum + (c.messages || []).length, 0);
-  const totalChats = chatList.length;
-  const activeChats = chatList.filter((c) => c.enabled !== false).length;
-
-  res.json({
-    today: {
-      incoming: Number(s.usage.incoming || 0),
-      replies: Number(s.usage.replies || 0),
-      quota: Number(s.dailyQuota || 0),
-      remaining: quotaRemaining(s),
-      inputTokens: Number(s.usage.inputTokens || 0),
-      outputTokens: Number(s.usage.outputTokens || 0),
-      totalTokens: Number(s.usage.totalTokens || 0),
-    },
-    allTime: { chats: totalChats, activeChats, storedMessages: totalMessages },
-    uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
-  });
+  const totalChats = chatList.length; const activeChats = chatList.filter((c) => c.enabled !== false).length;
+  res.json({ today: { incoming: Number(s.usage.incoming || 0), replies: Number(s.usage.replies || 0), quota: Number(s.dailyQuota || 0), remaining: quotaRemaining(s), inputTokens: Number(s.usage.inputTokens || 0), outputTokens: Number(s.usage.outputTokens || 0), totalTokens: Number(s.usage.totalTokens || 0) }, allTime: { chats: totalChats, activeChats, storedMessages: totalMessages }, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
 });
 
 app.get("/api/settings", (req, res) => res.json(settings()));
@@ -399,65 +247,36 @@ app.post("/api/settings", (req, res) => {
   const requestedMaxTokens = Number(req.body.maxTokens);
   const provider = ["groq", "gemini"].includes(req.body.provider) ? req.body.provider : current.provider;
   const groqModel = GROQ_MODELS.includes(req.body.groqModel) ? req.body.groqModel : current.groqModel;
-
   const next = {
-    ...current,
-    ...req.body,
-    enabled: !!req.body.enabled,
-    provider,
-    groqModel,
-    geminiModel: typeof req.body.geminiModel === "string" && req.body.geminiModel.trim()
-      ? req.body.geminiModel.trim()
-      : current.geminiModel,
-    maxTokens: Number.isFinite(requestedMaxTokens) && requestedMaxTokens >= 50
-      ? Math.min(Math.floor(requestedMaxTokens), 1000)
-      : current.maxTokens,
+    ...current, ...req.body, enabled: !!req.body.enabled, provider, groqModel,
+    geminiModel: typeof req.body.geminiModel === "string" && req.body.geminiModel.trim() ? req.body.geminiModel.trim() : current.geminiModel,
+    maxTokens: Number.isFinite(requestedMaxTokens) && requestedMaxTokens >= 50 ? Math.min(Math.floor(requestedMaxTokens), 1000) : current.maxTokens,
     mode: ["everyone", "selected"].includes(req.body.mode) ? req.body.mode : current.mode,
     mood: allowedMoods.includes(req.body.mood) ? req.body.mood : current.mood,
-    dailyQuota: Number.isFinite(requestedQuota) && requestedQuota >= 1
-      ? Math.min(Math.floor(requestedQuota), 10000)
-      : current.dailyQuota,
+    dailyQuota: Number.isFinite(requestedQuota) && requestedQuota >= 1 ? Math.min(Math.floor(requestedQuota), 10000) : current.dailyQuota,
+    systemPrompt: typeof req.body.systemPrompt === "string" ? req.body.systemPrompt.slice(0, 4000) : current.systemPrompt,
+    usage: current.usage,
   };
-
-  delete next.usage;
-  next.usage = current.usage;
   writeJson(SETTINGS, next);
   res.json(next);
 });
 
 app.get("/api/chats", (req, res) => {
-  const list = Object.entries(chats())
-    .map(([id, v]) => ({ id, enabled: v.enabled !== false, lastMessageAt: v.lastMessageAt || 0, lastReplyAt: v.lastReplyAt || 0, messageCount: (v.messages || []).length }))
-    .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
-  res.json(list);
+  const all = chats();
+  res.json(Object.entries(all).map(([id, c]) => ({ id, enabled: c.enabled !== false, messageCount: (c.messages || []).length, lastMessageAt: c.lastMessageAt, lastReplyAt: c.lastReplyAt })));
 });
 
 app.post("/api/chats/:id/toggle", (req, res) => {
-  const c = chats();
-  c[req.params.id] = c[req.params.id] || { messages: [] };
-  c[req.params.id].enabled = req.body.enabled !== false;
-  writeJson(CHATS, c);
-  res.json(c[req.params.id]);
+  const id = decodeURIComponent(req.params.id); const all = chats();
+  all[id] = all[id] || { enabled: true, messages: [] };
+  all[id].enabled = !!req.body.enabled;
+  writeJson(CHATS, all);
+  res.json({ ok: true, id, enabled: all[id].enabled });
 });
 
-app.get("/api/chats/:id/messages", (req, res) => {
-  res.json(chats()[req.params.id]?.messages || []);
-});
-
-app.post("/api/test", (req, res) => {
-  res.json({ ok: true, message: "Use WhatsApp itself to test after linking the account." });
-});
-
-const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`Dashboard: http://localhost:${port}`));
-
-console.log("Starting WhatsApp client...");
-client.initialize().catch((error) => {
-  lastError = error.message || String(error);
-  console.error("WhatsApp initialization error:", lastError);
-});
-
-process.on("unhandledRejection", (error) => {
-  lastError = error?.message || String(error);
-  console.error("Unhandled rejection:", lastError);
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, () => {
+  console.log(`Starting WhatsApp client...`);
+  console.log(`Dashboard: http://localhost:${PORT}`);
+  client.initialize();
 });
