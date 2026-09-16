@@ -34,17 +34,66 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+const DEFAULT_SETTINGS = {
+  enabled: false,
+  mode: "everyone",
+  mood: "casual",
+  dailyQuota: 100,
+  systemPrompt:
+    "Reply naturally and casually like me. Keep replies concise unless more detail is necessary.",
+  usage: {
+    date: "",
+    replies: 0,
+    incoming: 0,
+  },
+};
+
+const MOODS = {
+  casual: "Casual: relaxed, friendly, natural WhatsApp language. Use contractions and light humor when appropriate.",
+  formal: "Formal: polite, professional, clear, and composed. Avoid slang and excessive emojis.",
+  sad: "Sad: subdued, emotionally low, quiet, and slightly melancholic. Do not overdo it or sound dramatic.",
+  romantic: "Romantic: warm, affectionate, playful, and caring. Keep it natural and avoid being overly dramatic.",
+  vulgar: "Vulgar: use strong casual slang and profanity when it fits the conversation. Do not use hateful slurs, threats, or abusive harassment.",
+  angry: "Angry: irritated, blunt, and firm. Express frustration naturally without threats, hate, or harassment.",
+};
+
 function settings() {
-  return readJson(SETTINGS, {
-    enabled: false,
-    mode: "everyone",
-    systemPrompt:
-      "You are my personal WhatsApp assistant. Reply naturally and casually like me. Keep replies concise unless more detail is necessary.",
-  });
+  const stored = readJson(SETTINGS, {});
+  const merged = {
+    ...DEFAULT_SETTINGS,
+    ...stored,
+    usage: { ...DEFAULT_SETTINGS.usage, ...(stored.usage || {}) },
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (merged.usage.date !== today) {
+    merged.usage = { date: today, replies: 0, incoming: 0 };
+    writeJson(SETTINGS, merged);
+  }
+
+  return merged;
 }
 
 function chats() {
   return readJson(CHATS, {});
+}
+
+function recordIncoming() {
+  const s = settings();
+  s.usage.incoming += 1;
+  writeJson(SETTINGS, s);
+}
+
+function recordReply() {
+  const s = settings();
+  s.usage.replies += 1;
+  writeJson(SETTINGS, s);
+}
+
+function quotaRemaining(s = settings()) {
+  const quota = Number(s.dailyQuota);
+  if (quota <= 0) return 0;
+  return Math.max(0, quota - Number(s.usage.replies || 0));
 }
 
 const gemini = process.env.GEMINI_API_KEY
@@ -55,10 +104,9 @@ let clientReady = false;
 let qrVisible = false;
 let clientState = "starting";
 let lastError = "";
+const startedAt = Date.now();
 const pending = new Set();
 
-// Remote dashboard authentication.
-// Set CONTROL_TOKEN in .env before exposing this server to the internet.
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 
 function authorized(req, res, next) {
@@ -133,6 +181,7 @@ client.on("disconnected", (reason) => {
 
 function shouldReply(msg, s) {
   if (!s.enabled) return false;
+  if (!msg.body?.trim()) return false;
   if (msg.fromMe) return false;
   if (msg.from.endsWith("@g.us")) return false;
   if (msg.isStatus) return false;
@@ -146,6 +195,7 @@ async function generateReply(chatId, incoming) {
   const history = chats()[chatId]?.messages || [];
   const s = settings();
   const recentHistory = history.slice(-12);
+  const moodInstruction = MOODS[s.mood] || MOODS.casual;
 
   let conversation = "";
   for (const message of recentHistory) {
@@ -155,11 +205,14 @@ async function generateReply(chatId, incoming) {
 
   const prompt = `${s.systemPrompt}
 
+Mood: ${s.mood}
+Mood instructions: ${moodInstruction}
+
 Important instructions:
 - You are replying to a WhatsApp conversation.
 - Sound natural and human.
 - Do not mention that you are an AI unless explicitly asked.
-- Do not use unnecessary formal language.
+- Do not use unnecessary formal language unless the selected mood is formal.
 - Keep replies reasonably short.
 - Understand the previous conversation before replying.
 - Do not repeat information unnecessarily.
@@ -172,7 +225,7 @@ ${conversation}
 Generate ONLY the reply.`;
 
   const response = await gemini.models.generateContent({
-    model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
     contents: prompt,
   });
 
@@ -183,9 +236,18 @@ client.on("message", async (msg) => {
   const chatId = msg.from;
 
   try {
-    if (!shouldReply(msg, settings())) return;
+    const currentSettings = settings();
+    if (!shouldReply(msg, currentSettings)) return;
+
+    recordIncoming();
+
     if (pending.has(chatId)) {
       console.log(`Already processing ${chatId}`);
+      return;
+    }
+
+    if (quotaRemaining() <= 0) {
+      console.log("Daily AI reply quota reached. Reply skipped.");
       return;
     }
 
@@ -212,13 +274,20 @@ client.on("message", async (msg) => {
     const delay = Number(process.env.REPLY_DELAY_MS || 4000);
     await new Promise((resolve) => setTimeout(resolve, delay));
 
-    if (!settings().enabled) {
+    const latestSettings = settings();
+    if (!latestSettings.enabled) {
       console.log("AI disabled while waiting. Reply cancelled.");
+      return;
+    }
+
+    if (quotaRemaining(latestSettings) <= 0) {
+      console.log("Daily AI reply quota reached while waiting. Reply cancelled.");
       return;
     }
 
     if (reply) {
       await msg.reply(reply);
+      recordReply();
       console.log("Reply sent successfully.");
 
       const latest = chats();
@@ -240,22 +309,47 @@ client.on("message", async (msg) => {
   }
 });
 
-// Public health endpoint. No secrets or chat data are returned.
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, service: "whatsapp-ai-agent" });
 });
 
-// Everything below this point is for the remote dashboard.
 app.use("/api", authorized);
 
 app.get("/api/status", (req, res) => {
+  const s = settings();
   res.json({
     clientReady,
     clientState,
     qrVisible,
     lastError,
-    settings: settings(),
+    settings: s,
     geminiConfigured: !!gemini,
+    uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+    quotaRemaining: quotaRemaining(s),
+  });
+});
+
+app.get("/api/stats", (req, res) => {
+  const s = settings();
+  const all = chats();
+  const chatList = Object.values(all);
+  const totalMessages = chatList.reduce((sum, c) => sum + (c.messages || []).length, 0);
+  const totalChats = chatList.length;
+  const activeChats = chatList.filter((c) => c.enabled !== false).length;
+
+  res.json({
+    today: {
+      incoming: Number(s.usage.incoming || 0),
+      replies: Number(s.usage.replies || 0),
+      quota: Number(s.dailyQuota || 0),
+      remaining: quotaRemaining(s),
+    },
+    allTime: {
+      chats: totalChats,
+      activeChats,
+      storedMessages: totalMessages,
+    },
+    uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
   });
 });
 
@@ -263,6 +357,8 @@ app.get("/api/settings", (req, res) => res.json(settings()));
 
 app.post("/api/settings", (req, res) => {
   const current = settings();
+  const allowedMoods = Object.keys(MOODS);
+  const requestedQuota = Number(req.body.dailyQuota);
   const next = {
     ...current,
     ...req.body,
@@ -270,7 +366,14 @@ app.post("/api/settings", (req, res) => {
     mode: ["everyone", "selected"].includes(req.body.mode)
       ? req.body.mode
       : current.mode,
+    mood: allowedMoods.includes(req.body.mood) ? req.body.mood : current.mood,
+    dailyQuota: Number.isFinite(requestedQuota) && requestedQuota >= 1
+      ? Math.min(Math.floor(requestedQuota), 10000)
+      : current.dailyQuota,
   };
+
+  delete next.usage;
+  next.usage = current.usage;
   writeJson(SETTINGS, next);
   res.json(next);
 });
@@ -308,4 +411,12 @@ const port = Number(process.env.PORT || 3000);
 app.listen(port, () => console.log(`Dashboard: http://localhost:${port}`));
 
 console.log("Starting WhatsApp client...");
-client.initialize();
+client.initialize().catch((error) => {
+  lastError = error.message || String(error);
+  console.error("WhatsApp initialization error:", lastError);
+});
+
+process.on("unhandledRejection", (error) => {
+  lastError = error?.message || String(error);
+  console.error("Unhandled rejection:", lastError);
+});
