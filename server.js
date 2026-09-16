@@ -8,6 +8,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 const { GoogleGenAI } = require("@google/genai");
+const Groq = require("groq-sdk");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 
 const app = express();
@@ -37,6 +38,10 @@ function writeJson(file, data) {
 const DEFAULT_SETTINGS = {
   enabled: false,
   mode: "everyone",
+  provider: "groq",
+  groqModel: "openai/gpt-oss-20b",
+  geminiModel: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+  maxTokens: 180,
   mood: "casual",
   dailyQuota: 100,
   systemPrompt:
@@ -45,6 +50,9 @@ const DEFAULT_SETTINGS = {
     date: "",
     replies: 0,
     incoming: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
   },
 };
 
@@ -57,6 +65,12 @@ const MOODS = {
   angry: "Angry: irritated, blunt, and firm. Express frustration naturally without threats, hate, or harassment.",
 };
 
+const GROQ_MODELS = [
+  "openai/gpt-oss-20b",
+  "openai/gpt-oss-120b",
+  "qwen/qwen3-32b",
+];
+
 function settings() {
   const stored = readJson(SETTINGS, {});
   const merged = {
@@ -67,7 +81,7 @@ function settings() {
 
   const today = new Date().toISOString().slice(0, 10);
   if (merged.usage.date !== today) {
-    merged.usage = { date: today, replies: 0, incoming: 0 };
+    merged.usage = { date: today, replies: 0, incoming: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     writeJson(SETTINGS, merged);
   }
 
@@ -81,6 +95,14 @@ function chats() {
 function recordIncoming() {
   const s = settings();
   s.usage.incoming += 1;
+  writeJson(SETTINGS, s);
+}
+
+function recordUsage(usage) {
+  const s = settings();
+  s.usage.inputTokens += Number(usage.inputTokens || 0);
+  s.usage.outputTokens += Number(usage.outputTokens || 0);
+  s.usage.totalTokens += Number(usage.totalTokens || 0);
   writeJson(SETTINGS, s);
 }
 
@@ -100,6 +122,10 @@ const gemini = process.env.GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
   : null;
 
+const groq = process.env.GROQ_API_KEY
+  ? new Groq({ apiKey: process.env.GROQ_API_KEY })
+  : null;
+
 let clientReady = false;
 let qrVisible = false;
 let clientState = "starting";
@@ -111,9 +137,7 @@ const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 
 function authorized(req, res, next) {
   if (!CONTROL_TOKEN) {
-    return res.status(503).json({
-      error: "CONTROL_TOKEN is not configured on the Windows backend.",
-    });
+    return res.status(503).json({ error: "CONTROL_TOKEN is not configured on the Windows backend." });
   }
 
   const supplied = req.get("x-control-token");
@@ -137,11 +161,7 @@ const client = new Client({
   puppeteer: {
     headless: true,
     ...(executablePath ? { executablePath } : {}),
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-    ],
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   },
 });
 
@@ -189,47 +209,71 @@ function shouldReply(msg, s) {
   return true;
 }
 
-async function generateReply(chatId, incoming) {
-  if (!gemini) throw new Error("GEMINI_API_KEY is missing in .env");
-
-  const history = chats()[chatId]?.messages || [];
-  const s = settings();
-  const recentHistory = history.slice(-12);
-  const moodInstruction = MOODS[s.mood] || MOODS.casual;
-
+function buildConversation(history, incoming) {
   let conversation = "";
-  for (const message of recentHistory) {
+  for (const message of history.slice(-12)) {
     conversation += `${message.role === "user" ? "User" : "Assistant"}: ${message.content}\n`;
   }
   conversation += `User: ${incoming}\n`;
+  return conversation;
+}
 
-  const prompt = `${s.systemPrompt}
+function buildPrompt(s, conversation) {
+  const moodInstruction = MOODS[s.mood] || MOODS.casual;
+  return `${s.systemPrompt}\n\nMood: ${s.mood}\nMood instructions: ${moodInstruction}\n\nImportant instructions:\n- You are replying to a WhatsApp conversation.\n- Sound natural and human.\n- Do not mention that you are an AI unless explicitly asked.\n- Do not use unnecessary formal language unless the selected mood is formal.\n- Keep replies reasonably short.\n- Understand the previous conversation before replying.\n- Do not repeat information unnecessarily.\n- Do not use markdown unless necessary.\n- Reply with ONLY the message that should be sent.\n\nConversation:\n${conversation}\n\nGenerate ONLY the reply.`;
+}
 
-Mood: ${s.mood}
-Mood instructions: ${moodInstruction}
+async function generateGroqReply(prompt, model, maxTokens) {
+  if (!groq) throw new Error("GROQ_API_KEY is missing in .env");
 
-Important instructions:
-- You are replying to a WhatsApp conversation.
-- Sound natural and human.
-- Do not mention that you are an AI unless explicitly asked.
-- Do not use unnecessary formal language unless the selected mood is formal.
-- Keep replies reasonably short.
-- Understand the previous conversation before replying.
-- Do not repeat information unnecessarily.
-- Do not use markdown unless necessary.
-- Reply with ONLY the message that should be sent.
-
-Conversation:
-${conversation}
-
-Generate ONLY the reply.`;
-
-  const response = await gemini.models.generateContent({
-    model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
-    contents: prompt,
+  const response = await groq.chat.completions.create({
+    model,
+    messages: [{ role: "user", content: prompt }],
+    max_completion_tokens: maxTokens,
+    temperature: 0.7,
   });
 
-  return response.text?.trim() || "";
+  const usage = response.usage || {};
+  return {
+    text: response.choices?.[0]?.message?.content?.trim() || "",
+    usage: {
+      inputTokens: usage.prompt_tokens || 0,
+      outputTokens: usage.completion_tokens || 0,
+      totalTokens: usage.total_tokens || 0,
+    },
+  };
+}
+
+async function generateGeminiReply(prompt, model, maxTokens) {
+  if (!gemini) throw new Error("GEMINI_API_KEY is missing in .env");
+
+  const response = await gemini.models.generateContent({
+    model,
+    contents: prompt,
+    config: { maxOutputTokens: maxTokens },
+  });
+
+  const usage = response.usageMetadata || {};
+  return {
+    text: response.text?.trim() || "",
+    usage: {
+      inputTokens: usage.promptTokenCount || 0,
+      outputTokens: usage.candidatesTokenCount || 0,
+      totalTokens: usage.totalTokenCount || 0,
+    },
+  };
+}
+
+async function generateReply(chatId, incoming) {
+  const history = chats()[chatId]?.messages || [];
+  const s = settings();
+  const prompt = buildPrompt(s, buildConversation(history, incoming));
+
+  if (s.provider === "gemini") {
+    return generateGeminiReply(prompt, s.geminiModel || process.env.GEMINI_MODEL || "gemini-3.6-flash", Number(s.maxTokens) || 180);
+  }
+
+  return generateGroqReply(prompt, s.groqModel || "openai/gpt-oss-20b", Number(s.maxTokens) || 180);
 }
 
 client.on("message", async (msg) => {
@@ -255,17 +299,14 @@ client.on("message", async (msg) => {
     console.log(`\nIncoming message from ${chatId}`);
     console.log(`Message: ${msg.body}`);
 
-    const reply = await generateReply(chatId, msg.body);
-    console.log(`Gemini reply: ${reply}`);
+    const result = await generateReply(chatId, msg.body);
+    const reply = result.text;
+    recordUsage(result.usage);
+    console.log(`${currentSettings.provider} reply: ${reply}`);
+    console.log(`Tokens: ${result.usage.totalTokens}`);
 
     const all = chats();
-    const chat = all[chatId] || {
-      enabled: true,
-      messages: [],
-      lastMessageAt: null,
-      lastReplyAt: null,
-    };
-
+    const chat = all[chatId] || { enabled: true, messages: [], lastMessageAt: null, lastReplyAt: null };
     chat.messages.push({ role: "user", content: msg.body, timestamp: Date.now() });
     chat.lastMessageAt = Date.now();
     all[chatId] = chat;
@@ -293,11 +334,7 @@ client.on("message", async (msg) => {
       const latest = chats();
       latest[chatId] = latest[chatId] || { enabled: true, messages: [] };
       latest[chatId].messages = latest[chatId].messages || [];
-      latest[chatId].messages.push({
-        role: "assistant",
-        content: reply,
-        timestamp: Date.now(),
-      });
+      latest[chatId].messages.push({ role: "assistant", content: reply, timestamp: Date.now() });
       latest[chatId].lastReplyAt = Date.now();
       writeJson(CHATS, latest);
     }
@@ -323,6 +360,7 @@ app.get("/api/status", (req, res) => {
     qrVisible,
     lastError,
     settings: s,
+    groqConfigured: !!groq,
     geminiConfigured: !!gemini,
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
     quotaRemaining: quotaRemaining(s),
@@ -343,12 +381,11 @@ app.get("/api/stats", (req, res) => {
       replies: Number(s.usage.replies || 0),
       quota: Number(s.dailyQuota || 0),
       remaining: quotaRemaining(s),
+      inputTokens: Number(s.usage.inputTokens || 0),
+      outputTokens: Number(s.usage.outputTokens || 0),
+      totalTokens: Number(s.usage.totalTokens || 0),
     },
-    allTime: {
-      chats: totalChats,
-      activeChats,
-      storedMessages: totalMessages,
-    },
+    allTime: { chats: totalChats, activeChats, storedMessages: totalMessages },
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
   });
 });
@@ -359,13 +396,23 @@ app.post("/api/settings", (req, res) => {
   const current = settings();
   const allowedMoods = Object.keys(MOODS);
   const requestedQuota = Number(req.body.dailyQuota);
+  const requestedMaxTokens = Number(req.body.maxTokens);
+  const provider = ["groq", "gemini"].includes(req.body.provider) ? req.body.provider : current.provider;
+  const groqModel = GROQ_MODELS.includes(req.body.groqModel) ? req.body.groqModel : current.groqModel;
+
   const next = {
     ...current,
     ...req.body,
     enabled: !!req.body.enabled,
-    mode: ["everyone", "selected"].includes(req.body.mode)
-      ? req.body.mode
-      : current.mode,
+    provider,
+    groqModel,
+    geminiModel: typeof req.body.geminiModel === "string" && req.body.geminiModel.trim()
+      ? req.body.geminiModel.trim()
+      : current.geminiModel,
+    maxTokens: Number.isFinite(requestedMaxTokens) && requestedMaxTokens >= 50
+      ? Math.min(Math.floor(requestedMaxTokens), 1000)
+      : current.maxTokens,
+    mode: ["everyone", "selected"].includes(req.body.mode) ? req.body.mode : current.mode,
     mood: allowedMoods.includes(req.body.mood) ? req.body.mood : current.mood,
     dailyQuota: Number.isFinite(requestedQuota) && requestedQuota >= 1
       ? Math.min(Math.floor(requestedQuota), 10000)
@@ -380,13 +427,7 @@ app.post("/api/settings", (req, res) => {
 
 app.get("/api/chats", (req, res) => {
   const list = Object.entries(chats())
-    .map(([id, v]) => ({
-      id,
-      enabled: v.enabled !== false,
-      lastMessageAt: v.lastMessageAt || 0,
-      lastReplyAt: v.lastReplyAt || 0,
-      messageCount: (v.messages || []).length,
-    }))
+    .map(([id, v]) => ({ id, enabled: v.enabled !== false, lastMessageAt: v.lastMessageAt || 0, lastReplyAt: v.lastReplyAt || 0, messageCount: (v.messages || []).length }))
     .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
   res.json(list);
 });
