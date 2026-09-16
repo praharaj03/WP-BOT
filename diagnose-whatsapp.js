@@ -38,7 +38,20 @@ async function inspect(label) {
         try { return value == null ? null : String(value); } catch { return "error"; }
       };
       const safeKeys = (value) => {
-        try { return value ? Object.keys(value).slice(0, 40) : []; } catch { return []; }
+        try { return value ? Object.keys(value).slice(0, 60) : []; } catch { return []; }
+      };
+      const safeRequire = (name) => {
+        try {
+          const value = window.require(name);
+          return {
+            found: true,
+            type: safeType(value),
+            keys: safeKeys(value),
+            string: safeString(value).slice(0, 200),
+          };
+        } catch (error) {
+          return { found: false, error: String(error?.message || error) };
+        }
       };
 
       const info = {
@@ -51,18 +64,50 @@ async function inspect(label) {
         Store: safeType(window.Store),
         webpackChunk: safeType(window.webpackChunkwhatsapp_web_client),
         webpackChunkKeys: safeKeys(window.webpackChunkwhatsapp_web_client),
-        WAWebConnModel: safeType(window.WAWebConnModel),
-        WAWebUserPrefsMeUser: safeType(window.WAWebUserPrefsMeUser),
         require: safeType(window.require),
+        requireKeys: safeKeys(window.require),
+        requireModuleCount: safeType(window.require?.m) === "object" ? Object.keys(window.require.m).length : null,
+        knownModules: {},
       };
 
-      for (const key of ["WAWebConnModel", "WAWebUserPrefsMeUser"]) {
-        const value = window[key];
-        if (value != null) {
-          info[key + "Keys"] = safeKeys(value);
-          info[key + "String"] = safeString(value).slice(0, 200);
+      const knownNames = [
+        "WAWebConnModel",
+        "WAWebUserPrefsMeUser",
+        "WAWebSocketModel",
+        "WAWebCmd",
+        "WAWebUserPrefsMultiDevice",
+        "WAWebContactModel",
+        "WAWebChatModel",
+        "WAWebMsgModel",
+        "WAWebWidFactory",
+      ];
+      for (const name of knownNames) info.knownModules[name] = safeRequire(name);
+
+      const matches = [];
+      const modules = window.require?.m;
+      if (modules && typeof modules === "object") {
+        for (const id of Object.keys(modules)) {
+          let source = "";
+          try { source = String(modules[id]); } catch { continue; }
+          if (
+            source.includes("getMaybeMePnUser") ||
+            source.includes("getMaybeMeLidUser") ||
+            source.includes("Conn.serialize") ||
+            source.includes("WAWebConnModel")
+          ) {
+            matches.push({
+              id,
+              hasPnUser: source.includes("getMaybeMePnUser"),
+              hasLidUser: source.includes("getMaybeMeLidUser"),
+              hasConnSerialize: source.includes("Conn.serialize"),
+              hasConnModelName: source.includes("WAWebConnModel"),
+              source: source.slice(0, 500),
+            });
+            if (matches.length >= 20) break;
+          }
         }
       }
+      info.moduleSourceMatches = matches;
 
       return info;
     });
