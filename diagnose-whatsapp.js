@@ -60,64 +60,34 @@ async function inspect(label) {
         checks: {},
       };
 
-      // These are the exact operations used by whatsapp-web.js during ready().
-      out.checks.connModule = safe(() => {
-        const mod = window.require("WAWebConnModel");
-        return {
-          type: type(mod),
-          keys: keys(mod),
-          connType: type(mod?.Conn),
-          connKeys: keys(mod?.Conn),
-          serializeType: type(mod?.Conn?.serialize),
-        };
-      });
-
       out.checks.connSerialize = safe(() => {
         const mod = window.require("WAWebConnModel");
-        if (type(mod?.Conn?.serialize) !== "function") {
-          throw new Error("WAWebConnModel.Conn.serialize is not a function");
-        }
         const value = mod.Conn.serialize();
-        return {
-          type: type(value),
-          keys: keys(value),
-          value: value == null ? value : String(value).slice(0, 500),
-        };
-      });
-
-      out.checks.meUserModule = safe(() => {
-        const mod = window.require("WAWebUserPrefsMeUser");
-        return {
-          type: type(mod),
-          keys: keys(mod),
-          pnGetter: type(mod?.getMaybeMePnUser),
-          lidGetter: type(mod?.getMaybeMeLidUser),
-        };
+        return { type: type(value), keys: keys(value), hasWid: !!value?.wid, connected: value?.connected };
       });
 
       out.checks.pnUser = safe(() => {
-        const mod = window.require("WAWebUserPrefsMeUser");
-        const value = mod.getMaybeMePnUser();
-        return {
-          type: type(value),
-          value: value == null ? null : String(value).slice(0, 300),
-          keys: keys(value),
-        };
+        const value = window.require("WAWebUserPrefsMeUser").getMaybeMePnUser();
+        return { type: type(value), value: value == null ? null : String(value) };
       });
 
       out.checks.lidUser = safe(() => {
-        const mod = window.require("WAWebUserPrefsMeUser");
-        const value = mod.getMaybeMeLidUser();
-        return {
-          type: type(value),
-          value: value == null ? null : String(value).slice(0, 300),
-          keys: keys(value),
-        };
+        const value = window.require("WAWebUserPrefsMeUser").getMaybeMeLidUser();
+        return { type: type(value), value: value == null ? null : String(value) };
       });
 
-      out.checks.wwebjsVersion = safe(() => ({
-        type: type(window.WWebJS?.compareWwebVersions),
-        version: safe(() => window.WWebJS?.compareWwebVersions?.("2.3000.0", ">=")),
+      // Inspect the exact objects used by attachEventListeners().
+      out.checks.pageBindings = safe(() => ({
+        onAddMessageEvent: type(window.onAddMessageEvent),
+        onChangeMessageTypeEvent: type(window.onChangeMessageTypeEvent),
+        onAddMessageEventKeys: keys(window.onAddMessageEvent),
+        onChangeMessageTypeEventKeys: keys(window.onChangeMessageTypeEvent),
+      }));
+
+      out.checks.eventTargets = safe(() => ({
+        WWebJSKeys: keys(window.WWebJS),
+        cmdType: type(window.require("WAWebCmd")?.Cmd),
+        socketType: type(window.require("WAWebSocketModel")?.Socket),
       }));
 
       return out;
@@ -129,18 +99,52 @@ async function inspect(label) {
   }
 }
 
+function attachBrowserErrorLogging() {
+  const page = client.pupPage;
+  if (!page) return;
+
+  page.on("pageerror", (error) => {
+    console.error("PAGE ERROR:", error.stack || error.message || String(error));
+  });
+
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      console.error("BROWSER CONSOLE ERROR:", message.text());
+    }
+  });
+}
+
+async function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms)),
+  ]);
+}
+
 async function runClientStateCheck() {
-  const timeout = new Promise((resolve) =>
-    setTimeout(() => resolve({ timeout: true }), 5000)
-  );
   try {
-    const result = await Promise.race([
-      client.getState().then((state) => ({ state })).catch((error) => ({ error: error.stack || error.message || String(error) })),
-      timeout,
-    ]);
-    print("client.getState()", result);
+    const state = await withTimeout(client.getState(), 5000);
+    print("client.getState()", { state });
   } catch (error) {
     print("client.getState() ERROR", { error: error.stack || error.message || String(error) });
+  }
+}
+
+async function runAttachEventListenersProbe() {
+  console.log("\n=== attachEventListeners probe ===");
+  try {
+    const method = client.attachEventListeners;
+    console.log(`attachEventListeners type: ${typeof method}`);
+    if (typeof method !== "function") {
+      throw new Error("client.attachEventListeners is not a function");
+    }
+
+    console.log("Calling client.attachEventListeners() with a 10s timeout...");
+    await withTimeout(method.call(client), 10000);
+    console.log("ATTACH_EVENT_LISTENERS COMPLETED");
+  } catch (error) {
+    console.error("ATTACH_EVENT_LISTENERS ERROR:");
+    console.error(error.stack || error.message || String(error));
   }
 }
 
@@ -150,6 +154,7 @@ client.on("loading_screen", (percent, message) => {
 
 client.on("authenticated", async () => {
   console.log("authenticated");
+  attachBrowserErrorLogging();
   await inspect("authenticated");
 });
 
@@ -175,7 +180,10 @@ const pollTimer = setInterval(async () => {
   if (!client.pupPage) return;
   pollCount++;
   await inspect(`poll ${pollCount}`);
-  if (pollCount === 2) await runClientStateCheck();
+  if (pollCount === 2) {
+    await runClientStateCheck();
+    await runAttachEventListenersProbe();
+  }
 }, 10000);
 
 setTimeout(() => {
