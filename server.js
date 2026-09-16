@@ -1,4 +1,20 @@
-require("dotenv").config();\n\n// TERMINAL_MESSAGE_ONLY_PATCH\nconst ORIGINAL_CONSOLE_LOG = console.log.bind(console);\nconsole.log = () => {};\nconsole.warn = () => {};\nconsole.error = () => {};\n\nfunction getTerminalMessageId(msg) {\n  return msg?.id?._serialized || msg?.id?.$1 || msg?.id?.toString?.() || "unknown";\n}\n\nfunction terminalMessage(msg, replyText) {\n  ORIGINAL_CONSOLE_LOG(\n    `[MSG] ${getTerminalMessageId(msg)} | Message: ${msg?.body || ""} | Reply: ${replyText || ""}`\n  );\n}\n
+require("dotenv").config();
+
+// TERMINAL_MESSAGE_ONLY_PATCH
+const ORIGINAL_CONSOLE_LOG = console.log.bind(console);
+const ORIGINAL_CONSOLE_ERROR = console.error.bind(console);
+console.log = () => {};
+console.warn = () => {};
+
+function getTerminalMessageId(msg) {
+  return msg?.id?._serialized || msg?.id?.$1 || msg?.id?.toString?.() || "unknown";
+}
+
+function terminalMessage(msg, replyText) {
+  ORIGINAL_CONSOLE_LOG(
+    `[MSG] ${getTerminalMessageId(msg)} | Message: ${msg?.body || ""} | Reply: ${replyText || ""}`
+  );
+}
 
 const express = require("express");
 const cors = require("cors");
@@ -120,8 +136,6 @@ const chromeCandidates = [
 ];
 const executablePath = chromeCandidates.find(fs.existsSync);
 
-console.log(`Chrome executable: ${executablePath || "Puppeteer's bundled Chromium"}`);
-
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: path.join(__dirname, ".wwebjs_auth") }),
   puppeteer: {
@@ -132,7 +146,7 @@ const client = new Client({
 });
 
 process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled promise rejection (likely whatsapp-web.js internal):", reason?.stack || reason?.message || reason);
+  ORIGINAL_CONSOLE_ERROR("Unhandled promise rejection (likely whatsapp-web.js internal):", reason?.stack || reason?.message || reason);
 });
 
 async function runWhatsAppDiagnostic(label = "probe") {
@@ -156,15 +170,6 @@ async function runWhatsAppDiagnostic(label = "probe") {
       ...pageInfo,
       error: null,
     };
-
-    console.log(
-      `WhatsApp diagnostic [${label}]: ` +
-      `readyState=${pageInfo.readyState}, WWebJS=${pageInfo.wwebjs}, ` +
-      `Store=${pageInfo.store}, webpackChunk=${pageInfo.webpackChunk}, ` +
-      `url=${pageInfo.url}`
-    );
-    console.log(`WhatsApp diagnostic title: ${pageInfo.title}`);
-    console.log(`WhatsApp diagnostic body: ${pageInfo.bodyText}`);
   } catch (error) {
     waDiagnostics = {
       ...waDiagnostics,
@@ -172,7 +177,7 @@ async function runWhatsAppDiagnostic(label = "probe") {
       label,
       error: error.message || String(error),
     };
-    console.error(`WhatsApp diagnostic [${label}] failed:`, error.message || error);
+    ORIGINAL_CONSOLE_ERROR(`WhatsApp diagnostic [${label}] failed:`, error.message || error);
   }
 }
 
@@ -219,7 +224,6 @@ function markReady(source) {
   clientState = "ready";
   if (diagnosticTimer) { clearInterval(diagnosticTimer); diagnosticTimer = null; }
   if (readinessWatchdogTimer) { clearInterval(readinessWatchdogTimer); readinessWatchdogTimer = null; }
-  console.log(`WhatsApp AI Agent ready. (${source})`);
 }
 
 async function runReadinessWatchdog() {
@@ -228,7 +232,7 @@ async function runReadinessWatchdog() {
   const p = await probeReadiness();
   if (!p) return;
 
-  const pipelineWired = 
+  const pipelineWired =
     p.wwebjs === "object" &&
     p.onAddMessageEvent === "function" &&
     p.socketState === "CONNECTED" &&
@@ -246,13 +250,12 @@ async function runReadinessWatchdog() {
     lastError = `WhatsApp client did not reach a verified ready state in ${Math.floor(elapsed / 1000)}s (WWebJS=${p.wwebjs}, socket=${p.socketState}, hasSynced=${p.hasSynced}). WhatsApp Web may have shipped an incompatible update.`;
     if (diagnosticTimer) { clearInterval(diagnosticTimer); diagnosticTimer = null; }
     if (readinessWatchdogTimer) { clearInterval(readinessWatchdogTimer); readinessWatchdogTimer = null; }
-    console.error(lastError);
+    ORIGINAL_CONSOLE_ERROR(lastError);
     return;
   }
 
   if (recoveryAttempts === 0 && elapsed >= READY_RECOVERY_MS) {
     recoveryAttempts++;
-    console.log("Ready watchdog: message pipeline is not fully wired yet. Reloading WhatsApp Web once so the client re-injects cleanly...");
     await client.pupPage.reload({ waitUntil: "load", timeout: 30000 }).catch(() => {});
     readyDeadline = Date.now() + READY_GRACE_MS;
   }
@@ -289,7 +292,6 @@ async function waitForSendReady() {
     if (p && p.wwebjs === "object" && p.socketState === "CONNECTED" && p.hasSynced === true && !p.downloading) {
       return true;
     }
-    console.log(`Waiting for WhatsApp message sync before replying... (${p ? `${p.socketState}, downloading=${p.downloading}` : "page unavailable"})`);
     await sleep(5000);
   }
   return false;
@@ -316,13 +318,12 @@ async function sendReplyWithRetry(msg, replyText) {
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i];
     try {
-      const sent = await timed(attempt.fn(), SEND_TIMEOUT_MS, attempt.name);
-      if (sent && sent.id) { terminalMessage(msg, replyText); return { ok: true, method: attempt.name }; }
-      console.warn(`${attempt.name} resolved without a message object (may still be delivered).`);
-      return { ok: true, method: `${attempt.name}:no-object` };
+      await timed(attempt.fn(), SEND_TIMEOUT_MS, attempt.name);
+      terminalMessage(msg, replyText);
+      return { ok: true, method: attempt.name };
     } catch (e) {
       lastError = `Reply send attempt ${i + 1} (${attempt.name}) failed: ${e.message}`;
-      console.error(lastError);
+      ORIGINAL_CONSOLE_ERROR(lastError);
       if (i < attempts.length - 1) await sleep(SEND_RETRY_DELAY_MS);
     }
   }
@@ -331,24 +332,21 @@ async function sendReplyWithRetry(msg, replyText) {
 
 client.on("loading_screen", (percent, message) => {
   clientState = `loading:${percent}`;
-  console.log(`WhatsApp loading: ${percent}% - ${message}`);
 });
 
 client.on("change_state", (state) => {
   clientState = String(state).toLowerCase();
-  console.log(`WhatsApp state changed: ${state}`);
 });
 
 client.on("qr", (qr) => {
   qrVisible = true; clientState = "scan_required";
-  console.log("\nScan this QR code with WhatsApp > Linked devices > Link a device:\n");
+  ORIGINAL_CONSOLE_LOG("Scan this QR code with WhatsApp > Linked devices > Link a device:");
   qrcode.generate(qr, { small: true });
 });
 
 client.on("authenticated", () => {
   qrVisible = false;
   clientState = "authenticated";
-  console.log("WhatsApp authenticated. Waiting for WhatsApp Web to finish loading...");
   startWhatsAppDiagnostics();
   readyDeadline = Date.now() + READY_GRACE_MS;
   if (readinessWatchdogTimer) clearInterval(readinessWatchdogTimer);
@@ -368,7 +366,7 @@ client.on("auth_failure", (msg) => {
   clientReady = false;
   clientState = "auth_failure";
   lastError = msg;
-  console.error("WhatsApp authentication failed:", msg);
+  ORIGINAL_CONSOLE_ERROR("WhatsApp authentication failed:", msg);
 });
 
 client.on("disconnected", (reason) => {
@@ -381,10 +379,9 @@ client.on("disconnected", (reason) => {
   diagnosticTimer = null;
   if (readinessWatchdogTimer) clearInterval(readinessWatchdogTimer);
   readinessWatchdogTimer = null;
-  console.log("Disconnected:", reason);
 });
 
-client.on("remote_session_saved", () => console.log("WhatsApp session saved."));
+client.on("remote_session_saved", () => {});
 
 function shouldReply(msg, s) {
   if (!s.enabled || !msg.body?.trim() || msg.fromMe || msg.from.endsWith("@g.us") || msg.isStatus) return false;
@@ -431,10 +428,8 @@ client.on("message", async (msg) => {
     if (!shouldReply(msg, currentSettings)) return;
     recordIncoming();
     if (pending.has(chatId)) return;
-    if (quotaRemaining() <= 0) { console.log("Daily AI reply quota reached. Reply skipped."); return; }
+    if (quotaRemaining() <= 0) return;
     pending.add(chatId);
-    console.log(`\nIncoming message from ${chatId}`);
-    console.log(`Message: ${msg.body}`);
     const result = await generateReply(chatId, msg.body);
     recordUsage(result.usage);
     const reply = result.text;
@@ -452,13 +447,13 @@ client.on("message", async (msg) => {
       const syncReady = await waitForSendReady();
       if (!syncReady) {
         lastError = "Timed out waiting for WhatsApp message sync; reply skipped.";
-        console.error(lastError);
+        ORIGINAL_CONSOLE_ERROR(lastError);
         return;
       }
       const sendResult = await sendReplyWithRetry(msg, reply);
       if (!sendResult.ok) {
         lastError = "Reply send failed after retries; reply was not delivered.";
-        console.error(lastError);
+        ORIGINAL_CONSOLE_ERROR(lastError);
         return;
       }
       recordReply();
@@ -468,11 +463,10 @@ client.on("message", async (msg) => {
       latest[chatId].messages.push({ role: "assistant", content: reply, timestamp: Date.now() });
       latest[chatId].lastReplyAt = Date.now();
       writeJson(CHATS, latest);
-      console.log(`Reply sent successfully. (${sendResult.method})`);
     }
   } catch (e) {
     lastError = e.message || String(e);
-    console.error("Auto-reply error:", lastError);
+    ORIGINAL_CONSOLE_ERROR("Auto-reply error:", lastError);
   } finally {
     pending.delete(chatId);
   }
@@ -519,21 +513,20 @@ app.post("/api/chats/:id/toggle", (req, res) => {
   res.json({ ok: true, id, enabled: all[id].enabled });
 });
 
-app.listen(PORT, HOST, () => console.log(`Dashboard: http://${HOST}:${PORT}`));
+app.listen(PORT, HOST, () => {});
 
-console.log("Starting WhatsApp client initialization...");
 const initializationTimeout = setTimeout(() => {
   if (!clientReady) {
-    lastError = `WhatsApp client has not reached ready state after ${Math.floor((Date.now() - startedAt) / 1000)} seconds (state: ${clientState}). Check the terminal for loading/state diagnostics.`;
-    console.error(lastError);
+    lastError = `WhatsApp client has not reached ready state after ${Math.floor((Date.now() - startedAt) / 1000)} seconds (state: ${clientState}). Check the dashboard status.`;
+    ORIGINAL_CONSOLE_ERROR(lastError);
   }
 }, 90000);
 
 client.initialize()
-  .then(() => console.log("WhatsApp client initialize() completed."))
+  .then(() => {})
   .catch((error) => {
     clearTimeout(initializationTimeout);
     lastError = error.message || String(error);
     clientState = "initialization_failed";
-    console.error("WhatsApp initialization failed:", lastError);
+    ORIGINAL_CONSOLE_ERROR("WhatsApp initialization failed:", lastError);
   });
